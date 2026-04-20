@@ -1,0 +1,12 @@
+{
+  "name": "fluidra-epicor-shopify-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Epicor ↔ Shopify sync scripts (Fluidra)",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.4.5"
+  }
+}

@@ -1,0 +1,14 @@
+# Secrets — copy .env.example to .env locally
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Generated sync reports (may contain business data)
+fluidra_sync_reports/
+sync-report/
+
+# OS / editor
+.DS_Store
