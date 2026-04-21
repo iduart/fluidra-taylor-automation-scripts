@@ -32,6 +32,29 @@
  *   Unknown codes log a warning and the location is created/updated without
  *   payment terms — never fatal.
  *
+ * Contacts (Epicor CustCnt → Shopify B2B CompanyContact):
+ *   For each Epicor customer that ends up synced into Shopify as a Company
+ *   (CREATE or UPDATE path), the script also syncs its Epicor contacts into
+ *   Shopify B2B:
+ *     - Epicor is the source of truth. Contacts without a valid email are
+ *       skipped (logged); Inactive=true contacts are skipped.
+ *     - Match by normalized email. If a Shopify customer already exists with
+ *       that email it is reused (and updated if name/phone differ); otherwise
+ *       a new Shopify customer is created with an address (when Epicor has
+ *       one) and marketing explicitly opted out.
+ *     - Each synced customer is ensured to be a CompanyContact on the correct
+ *       Shopify Company; if it's attached to a wrong company, the wrong
+ *       association is removed first.
+ *     - Each synced contact is assigned a role at every CompanyLocation on
+ *       the Company (idempotent — existing role assignments are skipped).
+ *     - Shopify contacts on the company whose email is not in Epicor's list
+ *       are removed (reconciliation — Epicor wins).
+ *     - Two metafields are set on every synced customer:
+ *         custom.epicor_company_id      = Epicor CustID
+ *         custom.epicor_company_number  = Epicor CustNum
+ *     - No transactional or marketing emails are sent. See the banner
+ *       comment above findShopifyCustomerByEmail.
+ *
  * Run:
  *   cd Fluidra && npm install && node fluidra-syncCustomersFromEpicor.js
  *
@@ -40,7 +63,8 @@
  *   SHOPIFY_STORE_NAME, SHOPIFY_ACCESS_TOKEN
  * Optional: SHOPIFY_API_VERSION, EPICOR_PAGE_SIZE, EPICOR_TIMEOUT_MS, SHOPIFY_TIMEOUT_MS,
  *   MAX_RETRIES, RETRY_BASE_DELAY_MS, PER_ITEM_DELAY_MS, PER_PAGE_DELAY_MS,
- *   LOCATION_CONCURRENCY, MAX_ITEMS, DRY_RUN, FIRST_PAGE_ONLY, REPORT_DIR, NO_COLOR, DEBUG
+ *   LOCATION_CONCURRENCY, CONTACT_CONCURRENCY, CONTACT_PAGE_SIZE, SKIP_CONTACTS,
+ *   MAX_ITEMS, DRY_RUN, FIRST_PAGE_ONLY, REPORT_DIR, NO_COLOR, DEBUG
  */
 
 const { requireEnv } = require("./load-env");
@@ -48,6 +72,12 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const { createObjectCsvWriter } = require("csv-writer");
+
+// Bump the default EventEmitter listener ceiling. axios attaches an 'error'
+// listener to each outbound TLSSocket; with LOCATION_CONCURRENCY +
+// CONTACT_CONCURRENCY + retries we routinely exceed Node's default of 10 and
+// trip a benign MaxListenersExceededWarning. 50 is plenty of headroom.
+require("events").EventEmitter.defaultMaxListeners = 50;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -99,6 +129,18 @@ const RUN_CONFIG = {
   // inline expand cap. Also the page size for paginating existing Shopify
   // CompanyLocations in fetchAllCompanyLocations.
   shipToPageSize: parseInt(process.env.SHIPTO_PAGE_SIZE || "500", 10),
+  // Intra-customer concurrency for contact work. Epicor typically returns <50
+  // contacts per customer so this runs quickly even at 1, but 3 lets create +
+  // assign + role flows pipeline against Shopify's per-customer throttle.
+  contactConcurrency: Math.max(
+    1,
+    parseInt(process.env.CONTACT_CONCURRENCY || "3", 10)
+  ),
+  // Page size used when paging CustCnt records from Epicor for a single
+  // customer. The child endpoint uses $top/$skip.
+  contactPageSize: parseInt(process.env.CONTACT_PAGE_SIZE || "500", 10),
+  // Opt-out for contact sync — lets operators run a "companies only" pass.
+  skipContacts: /^(1|true|yes)$/i.test(process.env.SKIP_CONTACTS || ""),
   maxItems: parseInt(process.env.MAX_ITEMS || "0", 10),
   dryRun: /^(1|true|yes)$/i.test(process.env.DRY_RUN || ""),
   firstPageOnly: /^(1|true|yes)$/i.test(process.env.FIRST_PAGE_ONLY || ""),
@@ -513,6 +555,90 @@ async function fetchRemainingShipToesForCustomer(customer, skip) {
 }
 
 /**
+ * Fetch every CustCnt (customer contact) row for a given Epicor customer via
+ * the CustCntSvc OData service. CustCnt's compound key is
+ * (Company, CustNum, ShipToNum, ConNum), but we want *all* contacts for a
+ * customer across every ShipTo — so we filter on Company + CustNum and page
+ * with $top/$skip ordered by ShipToNum,ConNum.
+ *
+ * Returns the full array of CustCnt rows (raw, unfiltered). Callers are
+ * responsible for filtering out `Inactive=true` and validating email.
+ */
+async function fetchEpicorContactsForCustomer(customer) {
+  const customerCompany = customer.Company || epicorConfig.company;
+  const url = `${epicorConfig.baseUrl}/${encodeURIComponent(
+    epicorConfig.company
+  )}/Erp.BO.CustCntSvc/CustCnts`;
+
+  // Only the fields the sync needs. Keeping the $select tight reduces
+  // payload size on customers with dozens of contacts.
+  const $select = [
+    "Company",
+    "CustNum",
+    "ShipToNum",
+    "ConNum",
+    "Name",
+    "FirstName",
+    "LastName",
+    "MiddleName",
+    "ContactName",
+    "ContactTitle",
+    "EMailAddress",
+    "PhoneNum",
+    "CellPhoneNum",
+    "Inactive",
+    "SpecialAddress",
+    "Address1",
+    "Address2",
+    "Address3",
+    "City",
+    "State",
+    "Zip",
+    "Country",
+    "CountryNum",
+    "ExternalID",
+    "SysRowID",
+  ].join(",");
+
+  const filters = [
+    `Company eq '${odataEscapeString(customerCompany)}'`,
+    `CustNum eq ${Number(customer.CustNum)}`,
+  ];
+
+  const top = RUN_CONFIG.contactPageSize;
+  const all = [];
+  let skip = 0;
+  let pageNo = 0;
+
+  while (true) {
+    pageNo++;
+    const { result } = await withRetry(
+      `epicor:CustCnts cust=${customer.CustNum} page=${pageNo} skip=${skip}`,
+      async () => {
+        const res = await axios.get(url, {
+          headers: epicorAuthHeaders(),
+          params: {
+            $top: top,
+            $skip: skip,
+            $orderby: "ShipToNum,ConNum",
+            $select,
+            $filter: filters.join(" and "),
+          },
+          timeout: RUN_CONFIG.epicorRequestTimeoutMs,
+        });
+        return res.data;
+      }
+    );
+    const rows = Array.isArray(result.value) ? result.value : [];
+    all.push(...rows);
+    if (rows.length < top) break;
+    skip += rows.length;
+  }
+
+  return all;
+}
+
+/**
  * Fetch every Customer (with expanded ShipToes) using keyset pagination on
  * CustNum. Epicor's @odata.count is unreliable, so we rely on short pages /
  * MAX_ITEMS to know when to stop — same pattern as the products sync.
@@ -886,7 +1012,7 @@ async function assignCompanyLocationAddress(locationId, address, addressTypes) {
         address: $address
         addressTypes: $addressTypes
       ) {
-        addresses { id addressType }
+        addresses { id }
         userErrors { field message code }
       }
     }
@@ -903,6 +1029,396 @@ async function assignCompanyLocationAddress(locationId, address, addressTypes) {
     );
   }
   return data.companyLocationAssignAddress.addresses || [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shopify client — customers & company contacts
+//
+// Email suppression: Shopify does NOT send account invitations or welcome
+// emails as a side effect of `customerCreate`, `customerUpdate`,
+// `companyAssignCustomerAsContact`, or `companyLocationAssignRoles`. The only
+// customer-facing transactional emails Shopify sends from our code path are
+// triggered by explicit invite/activation mutations
+// (`customerGenerateAccountActivationUrl` + a separate send call) — which we
+// never invoke. Marketing opt-in is also avoided by explicitly setting
+// `emailMarketingConsent.marketingState = NOT_SUBSCRIBED` on create.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Look up a Shopify customer by exact email. `email` is deprecated on the
+ * Customer object in recent Admin API versions, so we use
+ * `defaultEmailAddress.emailAddress` for the post-filter and read-back.
+ * The search index is case-insensitive; the phrase-quoted query avoids
+ * accidental token matches on addresses that share a prefix.
+ *
+ * Returns { id, email, firstName, lastName, phone, companyContactProfiles[] }
+ * or null. `companyContactProfiles` is read inline so callers can detect a
+ * wrong-company association without a follow-up round-trip.
+ */
+async function findShopifyCustomerByEmail(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  const query = `
+    query findCustomerByEmail($q: String!) {
+      customers(first: 10, query: $q) {
+        nodes {
+          id
+          firstName
+          lastName
+          defaultEmailAddress { emailAddress }
+          defaultPhoneNumber { phoneNumber }
+          defaultAddress { id }
+          companyContactProfiles {
+            id
+            isMainContact
+            company { id externalId }
+          }
+        }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    query,
+    { q: `email:"${normalized.replace(/"/g, '\\"')}"` },
+    `shopify:findCustomerByEmail ${normalized}`
+  );
+  const nodes = data?.customers?.nodes || [];
+  const exact = nodes.find(
+    (n) =>
+      normalizeEmail(n.defaultEmailAddress?.emailAddress) === normalized
+  );
+  if (!exact) return null;
+  return {
+    id: exact.id,
+    email: normalizeEmail(exact.defaultEmailAddress?.emailAddress),
+    firstName: exact.firstName || "",
+    lastName: exact.lastName || "",
+    phone: exact.defaultPhoneNumber?.phoneNumber || "",
+    defaultAddressId: exact.defaultAddress?.id || null,
+    companyContactProfiles: exact.companyContactProfiles || [],
+  };
+}
+
+/**
+ * Create a Shopify Customer from the CustomerInput shape. Addresses and
+ * metafields can be supplied inline on the input. No email is sent (see
+ * banner comment at the top of this section).
+ *
+ * We deliberately never set `customer.phone` here (see
+ * `buildCreateCustomerInputFromContact`) — Shopify enforces store-wide phone
+ * uniqueness and Epicor data routinely has shared switchboard numbers. Phone
+ * stays on the address only.
+ */
+async function createShopifyCustomer(input) {
+  const mutation = `
+    mutation customerCreate($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer {
+          id
+          firstName
+          lastName
+          defaultEmailAddress { emailAddress }
+        }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { input },
+    `shopify:customerCreate ${input.email || "(no-email)"}`
+  );
+  const errs = data?.customerCreate?.userErrors || [];
+  if (errs.length) {
+    throw new Error(`customerCreate userErrors: ${JSON.stringify(errs)}`);
+  }
+  return data.customerCreate.customer;
+}
+
+/**
+ * Update a Shopify Customer. Only the fields provided on `input` are written.
+ * Shopify treats `customerUpdate(input: { id, ... })` as a partial update
+ * when fields are omitted — do NOT include fields that should remain as-is.
+ */
+async function updateShopifyCustomer(customerId, input) {
+  if (!input || Object.keys(input).length === 0) return null;
+  const mutation = `
+    mutation customerUpdate($input: CustomerInput!) {
+      customerUpdate(input: $input) {
+        customer {
+          id
+          firstName
+          lastName
+          defaultEmailAddress { emailAddress }
+        }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { input: { id: customerId, ...input } },
+    `shopify:customerUpdate ${customerId}`
+  );
+  const errs = data?.customerUpdate?.userErrors || [];
+  if (errs.length) {
+    throw new Error(`customerUpdate userErrors: ${JSON.stringify(errs)}`);
+  }
+  return data.customerUpdate.customer;
+}
+
+/**
+ * Create a customer address. We only call this when the customer has no
+ * existing default address — otherwise we'd pile up duplicate addresses every
+ * time the sync runs.
+ */
+async function createShopifyCustomerAddress(customerId, address, setAsDefault) {
+  const mutation = `
+    mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!, $setAsDefault: Boolean) {
+      customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: $setAsDefault) {
+        address { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { customerId, address, setAsDefault: !!setAsDefault },
+    `shopify:customerAddressCreate ${customerId}`
+  );
+  const errs = data?.customerAddressCreate?.userErrors || [];
+  if (errs.length) {
+    throw new Error(
+      `customerAddressCreate userErrors: ${JSON.stringify(errs)}`
+    );
+  }
+  return data.customerAddressCreate.address;
+}
+
+/**
+ * Set the two Epicor-linkage metafields on a Shopify customer. `metafieldsSet`
+ * upserts by (ownerId, namespace, key), so this is idempotent across runs.
+ */
+async function setCustomerEpicorMetafields(customerId, { custId, custNum }) {
+  const metafields = [];
+  if (custId != null && String(custId).trim() !== "") {
+    metafields.push({
+      ownerId: customerId,
+      namespace: "custom",
+      key: "epicor_company_id",
+      type: "single_line_text_field",
+      value: String(custId),
+    });
+  }
+  if (custNum != null && String(custNum).trim() !== "") {
+    metafields.push({
+      ownerId: customerId,
+      namespace: "custom",
+      key: "epicor_company_number",
+      type: "single_line_text_field",
+      value: String(custNum),
+    });
+  }
+  if (metafields.length === 0) return [];
+  const mutation = `
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields { id namespace key value }
+        userErrors { field message code }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { metafields },
+    `shopify:customerMetafieldsSet ${customerId}`
+  );
+  const errs = data?.metafieldsSet?.userErrors || [];
+  if (errs.length) {
+    throw new Error(
+      `customer metafieldsSet userErrors: ${JSON.stringify(errs)}`
+    );
+  }
+  return data.metafieldsSet.metafields || [];
+}
+
+/**
+ * Fetch every CompanyContact on a given Company, including each contact's
+ * role assignments (so callers can see which locations each contact already
+ * covers and avoid redundant companyLocationAssignRoles calls).
+ */
+async function fetchCompanyContacts(companyId) {
+  const query = `
+    query CompanyContacts($id: ID!, $first: Int!, $after: String) {
+      company(id: $id) {
+        id
+        contacts(first: $first, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            isMainContact
+            customer {
+              id
+              firstName
+              lastName
+              defaultEmailAddress { emailAddress }
+            }
+            roleAssignments(first: 100) {
+              nodes {
+                id
+                role { id name }
+                companyLocation { id }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const all = [];
+  let cursor = null;
+  let pageNo = 0;
+  while (true) {
+    pageNo++;
+    const data = await shopifyGraphql(
+      query,
+      { id: companyId, first: 50, after: cursor },
+      `shopify:companyContacts ${companyId} page=${pageNo}`
+    );
+    const conn = data?.company?.contacts;
+    if (!conn) break;
+    all.push(...(conn.nodes || []));
+    if (!conn.pageInfo?.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+  }
+  return all;
+}
+
+/**
+ * Fetch the CompanyContactRoles defined on a given Company. The returned list
+ * is used to pick the role assigned at each CompanyLocation when a contact is
+ * attached. Shopify's B2B setup typically exposes roles named `ordering_only`
+ * and `location_admin`; we prefer `ordering_only` and fall back to the first
+ * non-admin role, then finally the first role available.
+ */
+async function fetchCompanyContactRoles(companyId) {
+  const query = `
+    query CompanyContactRoles($id: ID!) {
+      company(id: $id) {
+        id
+        contactRoles(first: 50) {
+          nodes { id name note }
+        }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    query,
+    { id: companyId },
+    `shopify:companyContactRoles ${companyId}`
+  );
+  return data?.company?.contactRoles?.nodes || [];
+}
+
+function pickDefaultContactRole(roles) {
+  if (!Array.isArray(roles) || roles.length === 0) return null;
+  const byName = (needle) =>
+    roles.find((r) => String(r.name || "").toLowerCase() === needle);
+  // Prefer "ordering only" — the least-privilege role that still lets a
+  // contact place orders. Fall back to "buyer", then anything that isn't
+  // "admin" / "location admin", then the first available role.
+  return (
+    byName("ordering_only") ||
+    byName("ordering only") ||
+    byName("buyer") ||
+    roles.find(
+      (r) =>
+        !/admin/i.test(String(r.name || "")) &&
+        !/location[_\s]admin/i.test(String(r.name || ""))
+    ) ||
+    roles[0]
+  );
+}
+
+async function assignCustomerAsCompanyContact(companyId, customerId) {
+  const mutation = `
+    mutation companyAssignCustomerAsContact($companyId: ID!, $customerId: ID!) {
+      companyAssignCustomerAsContact(companyId: $companyId, customerId: $customerId) {
+        companyContact {
+          id
+          customer { id defaultEmailAddress { emailAddress } }
+          company { id externalId }
+        }
+        userErrors { field message code }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { companyId, customerId },
+    `shopify:companyAssignCustomerAsContact ${customerId}→${companyId}`
+  );
+  const errs = data?.companyAssignCustomerAsContact?.userErrors || [];
+  if (errs.length) {
+    throw new Error(
+      `companyAssignCustomerAsContact userErrors: ${JSON.stringify(errs)}`
+    );
+  }
+  return data.companyAssignCustomerAsContact.companyContact;
+}
+
+async function removeCompanyContact(companyContactId) {
+  const mutation = `
+    mutation companyContactRemoveFromCompany($companyContactId: ID!) {
+      companyContactRemoveFromCompany(companyContactId: $companyContactId) {
+        removedCompanyContactId
+        userErrors { field message code }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { companyContactId },
+    `shopify:companyContactRemoveFromCompany ${companyContactId}`
+  );
+  const errs = data?.companyContactRemoveFromCompany?.userErrors || [];
+  if (errs.length) {
+    throw new Error(
+      `companyContactRemoveFromCompany userErrors: ${JSON.stringify(errs)}`
+    );
+  }
+  return data.companyContactRemoveFromCompany.removedCompanyContactId;
+}
+
+/**
+ * Assign a batch of contact-role pairs at a single CompanyLocation. Shopify
+ * allows up to one assignment per (contact, location), so the caller MUST
+ * filter out contacts that already have a role on that location before
+ * calling this — otherwise Shopify surfaces a "contact already assigned"
+ * userError. See syncContactsForCustomer for the dedupe logic.
+ */
+async function assignCompanyLocationRoles(companyLocationId, rolesToAssign) {
+  if (!Array.isArray(rolesToAssign) || rolesToAssign.length === 0) return [];
+  const mutation = `
+    mutation companyLocationAssignRoles($companyLocationId: ID!, $rolesToAssign: [CompanyLocationRoleAssign!]!) {
+      companyLocationAssignRoles(companyLocationId: $companyLocationId, rolesToAssign: $rolesToAssign) {
+        roleAssignments { id role { id name } companyContact { id } }
+        userErrors { field message code }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(
+    mutation,
+    { companyLocationId, rolesToAssign },
+    `shopify:companyLocationAssignRoles ${companyLocationId} (${rolesToAssign.length} role(s))`
+  );
+  const errs = data?.companyLocationAssignRoles?.userErrors || [];
+  if (errs.length) {
+    throw new Error(
+      `companyLocationAssignRoles userErrors: ${JSON.stringify(errs)}`
+    );
+  }
+  return data.companyLocationAssignRoles.roleAssignments || [];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1050,6 +1566,127 @@ function buildLocationInput({ shipTo, custNum, paymentTermsTemplateId }) {
   return input;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Contact mappers — CustCnt → Shopify customer input
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Practical email regex: one "@", at least one dot in the domain, no spaces.
+// Good enough to reject obvious junk (Epicor data includes `N/A`, blank, etc.)
+// without rejecting valid but uncommon addresses.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(raw) {
+  if (raw == null) return "";
+  return String(raw).trim().toLowerCase();
+}
+
+function isValidEmail(raw) {
+  const v = normalizeEmail(raw);
+  if (!v) return false;
+  return EMAIL_RE.test(v);
+}
+
+/**
+ * Derive first/last name from a CustCnt row. Prefers explicit FirstName/LastName,
+ * then falls back to splitting Name / ContactName (same heuristic the rest of
+ * the script uses for ShipTo contacts).
+ */
+function deriveContactName(contact) {
+  const first = String(contact.FirstName || "").trim();
+  const last = String(contact.LastName || "").trim();
+  if (first || last) return { firstName: first, lastName: last };
+  return splitContactName(contact.Name || contact.ContactName || "");
+}
+
+/**
+ * Build a MailingAddressInput from a CustCnt row. Contacts that lack their
+ * own special address (SpecialAddress=false or no Address1) fall back to the
+ * parent customer's billing address — that's preferable to creating a
+ * customer with no address at all, since Shopify uses defaultAddress for B2B
+ * order context.
+ *
+ * Returns null when neither source has a usable address1.
+ */
+function buildContactAddress({ contact, customer }) {
+  const hasContactAddress =
+    contact.SpecialAddress === true &&
+    String(contact.Address1 || "").trim() !== "";
+  const source = hasContactAddress ? contact : customer;
+  const address1 = sanitizeAddressLine(source.Address1);
+  if (!address1) return null;
+
+  const countryCode = normalizeCountryCode(
+    source.CountryISOCode || source.Country
+  );
+  const { firstName, lastName } = deriveContactName(contact);
+
+  const address = {
+    address1,
+    city: String(source.City || "").trim(),
+    countryCode,
+  };
+  const a2 = sanitizeAddressLine(source.Address2);
+  if (a2) address.address2 = a2;
+  const zip = sanitizeZip(source.Zip || source.ZIP, countryCode);
+  if (zip) address.zip = zip;
+  const state = String(source.State || "").trim();
+  if (state) {
+    address.provinceCode =
+      countryCode === "US" ? state.toUpperCase() : state;
+  }
+  if (firstName) address.firstName = firstName;
+  if (lastName) address.lastName = lastName;
+  const phone = String(contact.PhoneNum || contact.CellPhoneNum || "").trim();
+  if (phone) address.phone = phone;
+  if (customer.Name) address.company = String(customer.Name).trim();
+  return address;
+}
+
+/**
+ * Build the CustomerInput payload for creating a brand-new Shopify customer
+ * from an Epicor CustCnt. Explicit marketing opt-out reinforces that we
+ * never want Shopify to treat these B2B contacts as marketable leads.
+ *
+ * Phone is intentionally NOT set at the customer level. Shopify enforces
+ * store-wide uniqueness on `customer.phone`, and Epicor data frequently has
+ * the same switchboard/office phone on dozens of contacts — writing any of
+ * them would permanently block the rest of the sync. The phone still lives on
+ * the address (no uniqueness constraint there) and on the raw Epicor CustCnt
+ * record, so operators can still reach the contact.
+ */
+function buildCreateCustomerInputFromContact({ contact, customer }) {
+  const { firstName, lastName } = deriveContactName(contact);
+  const input = {
+    email: normalizeEmail(contact.EMailAddress),
+    // Explicit opt-out: B2B contacts should never receive marketing email.
+    emailMarketingConsent: { marketingState: "NOT_SUBSCRIBED" },
+  };
+  if (firstName) input.firstName = firstName;
+  if (lastName) input.lastName = lastName;
+  const address = buildContactAddress({ contact, customer });
+  if (address) input.addresses = [address];
+  return input;
+}
+
+/**
+ * Compute the subset of mutable fields that actually need updating on an
+ * existing Shopify customer, given a fresher Epicor CustCnt. Returns a
+ * `CustomerInput`-shaped partial (never including the id) or null when no
+ * fields differ. We never overwrite an existing Shopify value with an empty
+ * Epicor value — that would clobber data an operator may have fixed by hand.
+ */
+function diffCustomerFieldsFromContact(existingCustomer, contact) {
+  const { firstName, lastName } = deriveContactName(contact);
+  const diff = {};
+  if (firstName && firstName !== (existingCustomer.firstName || "")) {
+    diff.firstName = firstName;
+  }
+  if (lastName && lastName !== (existingCustomer.lastName || "")) {
+    diff.lastName = lastName;
+  }
+  return Object.keys(diff).length > 0 ? diff : null;
+}
+
 function buildLocationAddress({ shipTo, customer }) {
   const countryCode = normalizeCountryCode(
     shipTo.CountryISOCode || shipTo.Country || customer.CountryISOCode
@@ -1109,6 +1746,15 @@ function buildCsvWriter() {
       { id: "failed_locations_count", title: "failed_locations_count" },
       { id: "payment_terms_code", title: "payment_terms_code" },
       { id: "payment_terms_template_id", title: "payment_terms_template_id" },
+      { id: "contacts_epicor_total", title: "contacts_epicor_total" },
+      { id: "contacts_created", title: "contacts_created" },
+      { id: "contacts_reused", title: "contacts_reused" },
+      { id: "contacts_skipped_no_email", title: "contacts_skipped_no_email" },
+      { id: "contacts_skipped_inactive", title: "contacts_skipped_inactive" },
+      { id: "contacts_reassigned_from_other_company", title: "contacts_reassigned_from_other_company" },
+      { id: "contacts_removed_stale", title: "contacts_removed_stale" },
+      { id: "contacts_location_role_assignments", title: "contacts_location_role_assignments" },
+      { id: "contacts_failed", title: "contacts_failed" },
       { id: "error_message", title: "error_message" },
       { id: "started_at", title: "started_at" },
       { id: "finished_at", title: "finished_at" },
@@ -1226,11 +1872,26 @@ async function syncLocationsForCustomer({
     const isZipError = (errMsg) =>
       /zip\b.*invalid/i.test(errMsg) || /invalid.*zip/i.test(errMsg);
 
+    // Shopify also validates provinceCode/zoneCode against ISO subdivisions.
+    // Epicor's `State` is free-text, so unrecognized codes (e.g. non-ISO
+    // abbreviations, foreign provinces) get rejected. Drop the field on retry.
+    const isZoneCodeError = (errMsg) =>
+      /zone\s*code/i.test(errMsg) || /province\s*code/i.test(errMsg);
+
     const stripZip = (addr) => {
       const copy = { ...addr };
       delete copy.zip;
       return copy;
     };
+
+    const stripZoneCode = (addr) => {
+      const copy = { ...addr };
+      delete copy.zoneCode;
+      delete copy.provinceCode;
+      return copy;
+    };
+
+    const stripZipAndZone = (addr) => stripZoneCode(stripZip(addr));
 
     try {
       if (existing) {
@@ -1248,15 +1909,23 @@ async function syncLocationsForCustomer({
               "BILLING",
             ]);
           } catch (addrErr) {
-            if (address.zip && isZipError(addrErr.message)) {
+            const zipBad = address.zip && isZipError(addrErr.message);
+            const zoneBad =
+              address.zoneCode && isZoneCodeError(addrErr.message);
+            if (zipBad || zoneBad) {
               logger.warn(
-                `   ⚠️  ShipTo ${hl.key(shipTo.ShipToNum)} zip '${address.zip}' rejected by Shopify — retrying without zip`
+                `   ⚠️  ShipTo ${hl.key(shipTo.ShipToNum)} address rejected by Shopify (${zipBad ? `zip='${address.zip}'` : ""}${zipBad && zoneBad ? ", " : ""}${zoneBad ? `zoneCode='${address.zoneCode}'` : ""}) — retrying without offending field(s)`
               );
-              await assignCompanyLocationAddress(
-                existing.id,
-                stripZip(address),
-                ["SHIPPING", "BILLING"]
-              );
+              const retryAddr =
+                zipBad && zoneBad
+                  ? stripZipAndZone(address)
+                  : zipBad
+                    ? stripZip(address)
+                    : stripZoneCode(address);
+              await assignCompanyLocationAddress(existing.id, retryAddr, [
+                "SHIPPING",
+                "BILLING",
+              ]);
             } else {
               throw addrErr;
             }
@@ -1280,13 +1949,22 @@ async function syncLocationsForCustomer({
             createInput
           );
         } catch (createErr) {
-          if (address.zip && isZipError(createErr.message)) {
+          const zipBad = address.zip && isZipError(createErr.message);
+          const zoneBad =
+            address.zoneCode && isZoneCodeError(createErr.message);
+          if (zipBad || zoneBad) {
             logger.warn(
-              `   ⚠️  ShipTo ${hl.key(shipTo.ShipToNum)} zip '${address.zip}' rejected by Shopify — retrying without zip`
+              `   ⚠️  ShipTo ${hl.key(shipTo.ShipToNum)} address rejected by Shopify (${zipBad ? `zip='${address.zip}'` : ""}${zipBad && zoneBad ? ", " : ""}${zoneBad ? `zoneCode='${address.zoneCode}'` : ""}) — retrying without offending field(s)`
             );
+            const retryAddr =
+              zipBad && zoneBad
+                ? stripZipAndZone(address)
+                : zipBad
+                  ? stripZip(address)
+                  : stripZoneCode(address);
             created = await createShopifyCompanyLocation(shopifyCompany.id, {
               ...createInput,
-              shippingAddress: stripZip(address),
+              shippingAddress: retryAddr,
             });
           } else {
             throw createErr;
@@ -1337,8 +2015,502 @@ async function syncLocationsForCustomer({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-customer contact sync
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sync Epicor CustCnt records for a single customer into Shopify:
+ *   - ensure a Shopify customer exists per Epicor email (reuse by email),
+ *   - update mutable fields + metafields,
+ *   - ensure the customer is a CompanyContact on the CORRECT Shopify company
+ *     (moving it off any wrong company first),
+ *   - ensure the contact has a role at every CompanyLocation on this company,
+ *   - remove Shopify company contacts that no longer exist in Epicor.
+ *
+ * Idempotency: every operation is gated on read-first state — existing
+ * customers are reused, existing company contacts are detected, already-assigned
+ * location roles are skipped, metafields use upsert semantics.
+ *
+ * Emails: no transactional or marketing emails are sent. See the banner
+ * comment above findShopifyCustomerByEmail.
+ */
+async function syncContactsForCustomer({ customer, shopifyCompany }) {
+  const summary = {
+    epicor_total: 0,
+    skipped_no_email: 0,
+    skipped_inactive: 0,
+    created: 0,
+    updated: 0,
+    reused: 0,
+    reassigned_from_other_company: 0,
+    removed_stale: 0,
+    location_role_assignments: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  const companyId = shopifyCompany.id;
+  const custId = customer.CustID;
+  const custNum = customer.CustNum;
+
+  // ── 1. Fetch Epicor contacts.
+  let epicorContacts = [];
+  try {
+    epicorContacts = await fetchEpicorContactsForCustomer(customer);
+  } catch (err) {
+    const msg = err.response?.data
+      ? JSON.stringify(err.response.data)
+      : err.message;
+    summary.failed++;
+    summary.errors.push(`epicor:CustCnts fetch failed: ${msg}`);
+    logger.error(
+      `   ❌ Failed to fetch Epicor contacts for ${hl.cust(custId)}`,
+      msg
+    );
+    return summary;
+  }
+
+  summary.epicor_total = epicorContacts.length;
+  logger.info(
+    `   👥 ${hl.cust(custId)} — Epicor returned ${hl.num(
+      epicorContacts.length
+    )} contact(s)`
+  );
+
+  // Filter out inactive contacts (Epicor is source of truth — inactive means
+  // "do not use"). We still track the count so the CSV tells the full story.
+  const activeEpicorContacts = epicorContacts.filter((c) => c.Inactive !== true);
+  summary.skipped_inactive = epicorContacts.length - activeEpicorContacts.length;
+  if (summary.skipped_inactive > 0) {
+    logger.info(
+      `   ⏭️  ${hl.num(summary.skipped_inactive)} Epicor contact(s) skipped (Inactive=true)`
+    );
+  }
+
+  // ── 2. Prepare the working set: dedupe by normalized email, drop contacts
+  //    without a valid email. Epicor occasionally has the same email on
+  //    multiple ConNum rows (e.g. per-ship-to duplicates) — Shopify customers
+  //    are keyed by email, so we collapse them and keep the first seen.
+  const byEmail = new Map();
+  for (const contact of activeEpicorContacts) {
+    if (!isValidEmail(contact.EMailAddress)) {
+      summary.skipped_no_email++;
+      logger.info(
+        `   ⏭️  Skipping CustCnt ShipToNum='${contact.ShipToNum || ""}' ConNum=${
+          contact.ConNum
+        } (${contact.Name || contact.ContactName || "(no name)"}) — no/invalid email`
+      );
+      continue;
+    }
+    const email = normalizeEmail(contact.EMailAddress);
+    if (!byEmail.has(email)) byEmail.set(email, contact);
+  }
+
+  if (byEmail.size === 0 && summary.epicor_total === 0) {
+    // Nothing to sync but also nothing to reconcile against — the only
+    // question is whether Shopify has stale contacts. Fall through to
+    // reconciliation; Shopify stale contacts will be removed if present.
+  }
+
+  // ── 3. Load Shopify state: existing company contacts + company locations +
+  //    available contact roles. One GraphQL call each; all three are bounded
+  //    in size (companies rarely have > a few hundred of each).
+  let existingShopifyContacts = [];
+  let companyLocations = [];
+  let contactRoles = [];
+  try {
+    [existingShopifyContacts, companyLocations, contactRoles] =
+      await Promise.all([
+        fetchCompanyContacts(companyId),
+        fetchAllCompanyLocations(companyId),
+        fetchCompanyContactRoles(companyId),
+      ]);
+  } catch (err) {
+    const msg = err.response?.data
+      ? JSON.stringify(err.response.data)
+      : err.message;
+    summary.failed++;
+    summary.errors.push(`shopify:companyState fetch failed: ${msg}`);
+    logger.error(
+      `   ❌ Failed to load Shopify company state for ${hl.cust(custId)}`,
+      msg
+    );
+    return summary;
+  }
+
+  const defaultRole = pickDefaultContactRole(contactRoles);
+  if (companyLocations.length > 0 && !defaultRole) {
+    logger.warn(
+      `   ⚠️  Company ${shopifyCompany.id} has no contactRoles — contacts will be attached but not assigned to any location role`
+    );
+  } else if (defaultRole) {
+    logger.info(
+      `   🎭 Using role ${hl.key(defaultRole.name)} (${defaultRole.id}) for location assignments`
+    );
+  }
+  logger.info(
+    `   🏢 Shopify state: ${hl.num(existingShopifyContacts.length)} existing contact(s), ${hl.num(companyLocations.length)} location(s)`
+  );
+
+  // Build fast lookups.
+  const existingByEmail = new Map();
+  for (const sc of existingShopifyContacts) {
+    const e = normalizeEmail(sc.customer?.defaultEmailAddress?.emailAddress);
+    if (e) existingByEmail.set(e, sc);
+  }
+
+  // ── 4. Process each (deduped) Epicor contact with bounded concurrency.
+  //    Each worker runs to completion independently; one failure never aborts
+  //    the rest.
+  const workItems = [...byEmail.entries()].map(([email, contact]) => ({
+    email,
+    contact,
+  }));
+
+  const processOneContact = async ({ email, contact }) => {
+    const label = `${contact.Name || contact.ContactName || email}`;
+    try {
+      // 4a. Find-by-email on the whole store (not just this company).
+      let shopifyCustomer = null;
+      try {
+        shopifyCustomer = await findShopifyCustomerByEmail(email);
+      } catch (err) {
+        throw Object.assign(err, { stage: "findByEmail" });
+      }
+
+      let customerId;
+      let created = false;
+      if (shopifyCustomer) {
+        customerId = shopifyCustomer.id;
+        logger.info(
+          `   🔎 Found existing Shopify customer for ${hl.key(email)} → ${hl.key(customerId)}`
+        );
+      } else {
+        // Create path.
+        if (RUN_CONFIG.dryRun) {
+          logger.info(
+            `   🟨 [DRY RUN] would CREATE Shopify customer ${hl.key(email)} (${label})`
+          );
+          // Dry-run: we can't proceed further since we don't have a real id.
+          return { kind: "dry_run_created" };
+        }
+        const input = buildCreateCustomerInputFromContact({ contact, customer });
+        const createdCustomer = await createShopifyCustomer(input);
+        customerId = createdCustomer.id;
+        created = true;
+        // Re-hydrate the "existing" view so downstream diff logic sees the
+        // state we just wrote (prevents a redundant customerUpdate right
+        // after create).
+        shopifyCustomer = {
+          id: customerId,
+          email,
+          firstName: createdCustomer.firstName || "",
+          lastName: createdCustomer.lastName || "",
+          phone: "",
+          defaultAddressId: input.addresses?.length ? "seeded" : null,
+          companyContactProfiles: [],
+        };
+        logger.info(
+          `   ✅ CREATED Shopify customer ${hl.key(email)} → ${hl.key(customerId)}`
+        );
+      }
+
+      // 4b. Idempotent field update for existing customers.
+      if (!created) {
+        const fieldDiff = diffCustomerFieldsFromContact(
+          shopifyCustomer,
+          contact
+        );
+        if (fieldDiff) {
+          if (RUN_CONFIG.dryRun) {
+            logger.info(
+              `   🟨 [DRY RUN] would UPDATE customer ${hl.key(email)} fields: ${Object.keys(fieldDiff).join(", ")}`
+            );
+          } else {
+            await updateShopifyCustomer(customerId, fieldDiff);
+            logger.info(
+              `   ✅ UPDATED customer ${hl.key(email)} fields: ${Object.keys(fieldDiff).join(", ")}`
+            );
+          }
+        }
+        // Only seed an address when the customer has none at all. We never
+        // mutate or replace an existing default address — that's operator
+        // territory.
+        if (!shopifyCustomer.defaultAddressId) {
+          const address = buildContactAddress({ contact, customer });
+          if (address) {
+            if (RUN_CONFIG.dryRun) {
+              logger.info(
+                `   🟨 [DRY RUN] would CREATE default address for ${hl.key(email)}`
+              );
+            } else {
+              await createShopifyCustomerAddress(customerId, address, true);
+              logger.info(
+                `   🏠 ADDED default address for ${hl.key(email)}`
+              );
+            }
+          }
+        }
+      }
+
+      // 4c. Metafields (upsert, safe on every run).
+      if (RUN_CONFIG.dryRun) {
+        logger.info(
+          `   🟨 [DRY RUN] would SET metafields custom.epicor_company_id=${custId}, custom.epicor_company_number=${custNum} on ${customerId}`
+        );
+      } else {
+        await setCustomerEpicorMetafields(customerId, { custId, custNum });
+        logger.info(
+          `   🏷️  metafields custom.epicor_company_id=${hl.key(custId)}, custom.epicor_company_number=${hl.key(custNum)} set on ${customerId}`
+        );
+      }
+
+      // 4d. Ensure correct company association. If the customer is already a
+      // contact of some OTHER company, detach that first. companyContactProfiles
+      // lists every company the customer is attached to (Shopify's B2B model
+      // allows 0/1/many depending on store config; we want exactly 1 = THIS
+      // company).
+      const profiles = shopifyCustomer.companyContactProfiles || [];
+      const thisCompanyProfile = profiles.find(
+        (p) => p.company?.id === companyId
+      );
+      const wrongProfiles = profiles.filter(
+        (p) => p.company?.id && p.company.id !== companyId
+      );
+      for (const wrong of wrongProfiles) {
+        const wrongCompanyId = wrong.company?.id || "(unknown)";
+        if (RUN_CONFIG.dryRun) {
+          logger.warn(
+            `   🟨 [DRY RUN] would REMOVE ${hl.key(email)} from wrong company ${wrongCompanyId}`
+          );
+        } else {
+          await removeCompanyContact(wrong.id);
+          logger.warn(
+            `   🧹 REMOVED ${hl.key(email)} from wrong company ${wrongCompanyId} (CompanyContact=${wrong.id})`
+          );
+        }
+        summary.reassigned_from_other_company++;
+      }
+
+      let companyContactId = thisCompanyProfile?.id || null;
+      // Also consult the company-contacts listing we loaded earlier — this
+      // catches a customer that became a contact since the last search but
+      // isn't on the (possibly stale) `companyContactProfiles` field.
+      if (!companyContactId) {
+        const listed = existingByEmail.get(email);
+        if (listed?.customer?.id === customerId) companyContactId = listed.id;
+      }
+
+      if (!companyContactId) {
+        if (RUN_CONFIG.dryRun) {
+          logger.info(
+            `   🟨 [DRY RUN] would ASSIGN ${hl.key(email)} as contact of company ${companyId}`
+          );
+        } else {
+          const cc = await assignCustomerAsCompanyContact(companyId, customerId);
+          companyContactId = cc?.id || null;
+          logger.info(
+            `   🔗 ASSIGNED ${hl.key(email)} to company ${hl.key(companyId)} (CompanyContact=${companyContactId})`
+          );
+        }
+      } else {
+        logger.info(
+          `   ↩︎ ${hl.key(email)} already attached to company ${companyId} (CompanyContact=${companyContactId})`
+        );
+      }
+
+      // 4e. Ensure role assignment at every CompanyLocation.
+      if (companyLocations.length === 0) {
+        logger.info(
+          `   ℹ️  Company ${companyId} has no locations — no role assignments needed`
+        );
+      } else if (!defaultRole) {
+        // Already warned above.
+      } else if (!companyContactId) {
+        // Can happen in DRY_RUN when the assignment above was simulated.
+        logger.info(
+          `   🟨 [DRY RUN] would ASSIGN role ${defaultRole.name} at ${companyLocations.length} location(s) for ${hl.key(email)}`
+        );
+      } else {
+        // Which locations is this contact already covering?
+        const listedContact = existingShopifyContacts.find(
+          (c) => c.id === companyContactId
+        );
+        const alreadyAssignedLocationIds = new Set(
+          (listedContact?.roleAssignments?.nodes || [])
+            .map((ra) => ra.companyLocation?.id)
+            .filter(Boolean)
+        );
+        const missingLocations = companyLocations.filter(
+          (loc) => !alreadyAssignedLocationIds.has(loc.id)
+        );
+        if (missingLocations.length === 0) {
+          logger.info(
+            `   ↩︎ ${hl.key(email)} already has role on all ${hl.num(companyLocations.length)} location(s)`
+          );
+        } else {
+          if (RUN_CONFIG.dryRun) {
+            logger.info(
+              `   🟨 [DRY RUN] would ASSIGN ${hl.key(email)} as ${defaultRole.name} on ${missingLocations.length} location(s)`
+            );
+          } else {
+            // Shopify accepts one assignment per call. Batching per-location
+            // keeps userError blast radius small — one bad location can't
+            // break the rest.
+            for (const loc of missingLocations) {
+              try {
+                const assignments = await assignCompanyLocationRoles(loc.id, [
+                  {
+                    companyContactId,
+                    companyContactRoleId: defaultRole.id,
+                  },
+                ]);
+                summary.location_role_assignments += assignments.length || 1;
+                logger.info(
+                  `   📍 ASSIGNED role ${defaultRole.name} to ${hl.key(email)} at location ${loc.id}`
+                );
+              } catch (locErr) {
+                const msg = locErr.response?.data
+                  ? JSON.stringify(locErr.response.data)
+                  : locErr.message;
+                logger.error(
+                  `   ❌ Failed to assign ${hl.key(email)} at location ${loc.id}`,
+                  msg
+                );
+                summary.errors.push(
+                  `contact ${email} location ${loc.id}: ${msg}`
+                );
+              }
+            }
+          }
+        }
+      }
+
+      if (created) return { kind: "created" };
+      return { kind: "reused_or_updated" };
+    } catch (err) {
+      const msg = err.response?.data
+        ? JSON.stringify(err.response.data)
+        : err.message;
+      logger.error(
+        `   ❌ Contact sync failed for ${hl.key(email)} (${label})`,
+        msg
+      );
+      return { kind: "failed", error: `contact ${email}: ${msg}` };
+    }
+  };
+
+  const results = await asyncPool(
+    RUN_CONFIG.contactConcurrency,
+    workItems,
+    processOneContact
+  );
+  for (const r of results) {
+    if (!r) continue;
+    if (r.__workerError) {
+      summary.failed++;
+      summary.errors.push(
+        r.__workerError.message || String(r.__workerError)
+      );
+      continue;
+    }
+    if (r.kind === "created" || r.kind === "dry_run_created") summary.created++;
+    else if (r.kind === "reused_or_updated") summary.reused++;
+    else if (r.kind === "failed") {
+      summary.failed++;
+      if (r.error) summary.errors.push(r.error);
+    }
+  }
+
+  // `summary.updated` is derived from reused rows that actually received a
+  // field change. Since we log per-update above and tracking this granularly
+  // across the async pool would need more wiring than it's worth, we leave
+  // the split counter hidden for now and roll everything that wasn't newly
+  // created into `reused`. The per-row log line is the source of truth.
+
+  // ── 5. Reconciliation: remove stale Shopify contacts that no longer appear
+  //    in Epicor's contact list (Epicor wins). We only consider contacts we
+  //    ourselves could have created — i.e. those whose email we'd recognize.
+  //    Any contact on the Shopify company without an email is left alone
+  //    (operator-created; not ours to touch).
+  const epicorEmails = new Set(byEmail.keys());
+  const stale = existingShopifyContacts.filter((sc) => {
+    const e = normalizeEmail(sc.customer?.defaultEmailAddress?.emailAddress);
+    if (!e) return false; // can't compare — skip
+    return !epicorEmails.has(e);
+  });
+  for (const sc of stale) {
+    const e = normalizeEmail(sc.customer?.defaultEmailAddress?.emailAddress);
+    try {
+      if (RUN_CONFIG.dryRun) {
+        logger.warn(
+          `   🟨 [DRY RUN] would REMOVE stale Shopify contact ${hl.key(e)} (CompanyContact=${sc.id}) — not in Epicor`
+        );
+      } else {
+        await removeCompanyContact(sc.id);
+        logger.warn(
+          `   🧹 REMOVED stale Shopify contact ${hl.key(e)} (CompanyContact=${sc.id}) — not in Epicor`
+        );
+      }
+      summary.removed_stale++;
+    } catch (err) {
+      const msg = err.response?.data
+        ? JSON.stringify(err.response.data)
+        : err.message;
+      logger.error(
+        `   ❌ Failed to remove stale contact ${hl.key(e || sc.id)}`,
+        msg
+      );
+      summary.failed++;
+      summary.errors.push(`stale ${e || sc.id}: ${msg}`);
+    }
+  }
+
+  return summary;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Per-customer processor
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Merge a contact-sync summary onto the CSV row and adjust overall row status
+ * when contacts failed but the company sync itself was clean. Never downgrades
+ * an already-worse status.
+ */
+function applyContactSummaryToRow(row, summary) {
+  if (!summary) return;
+  row.contacts_epicor_total = summary.epicor_total;
+  row.contacts_created = summary.created;
+  row.contacts_reused = summary.reused;
+  row.contacts_skipped_no_email = summary.skipped_no_email;
+  row.contacts_skipped_inactive = summary.skipped_inactive;
+  row.contacts_reassigned_from_other_company =
+    summary.reassigned_from_other_company;
+  row.contacts_removed_stale = summary.removed_stale;
+  row.contacts_location_role_assignments = summary.location_role_assignments;
+  row.contacts_failed = summary.failed;
+  if (summary.failed > 0) {
+    if (row.status === "success") row.status = "warning";
+    const note = `contacts: ${summary.failed} failed`;
+    row.reason = row.reason ? `${row.reason}; ${note}` : note;
+    if (summary.errors && summary.errors.length > 0) {
+      const suffix = summary.errors.join(" | ");
+      row.error_message = row.error_message
+        ? `${row.error_message} || ${suffix}`.slice(0, 4000)
+        : suffix.slice(0, 4000);
+    }
+  }
+  logger.info(
+    `   📇 Contacts: epicor=${hl.num(summary.epicor_total)}  ` +
+      `created=${hl.ok(summary.created)}  reused=${hl.ok(summary.reused)}  ` +
+      `no_email=${hl.key(summary.skipped_no_email)}  inactive=${hl.key(summary.skipped_inactive)}  ` +
+      `reassigned=${hl.warn(summary.reassigned_from_other_company)}  ` +
+      `stale_removed=${hl.warn(summary.removed_stale)}  ` +
+      `loc_roles=${hl.ok(summary.location_role_assignments)}  ` +
+      `failed=${summary.failed > 0 ? hl.bad(summary.failed) : hl.ok(summary.failed)}`
+  );
+}
 
 async function processCustomer(customer, index, totalKnown) {
   const started_at = ts();
@@ -1383,6 +2555,15 @@ async function processCustomer(customer, index, totalKnown) {
     failed_locations_count: 0,
     payment_terms_code: paymentTerms.code,
     payment_terms_template_id: paymentTerms.id || "",
+    contacts_epicor_total: 0,
+    contacts_created: 0,
+    contacts_reused: 0,
+    contacts_skipped_no_email: 0,
+    contacts_skipped_inactive: 0,
+    contacts_reassigned_from_other_company: 0,
+    contacts_removed_stale: 0,
+    contacts_location_role_assignments: 0,
+    contacts_failed: 0,
     error_message: "",
     started_at,
     finished_at: "",
@@ -1532,6 +2713,19 @@ async function processCustomer(customer, index, totalKnown) {
           row.reason = "Company created; one or more locations failed";
           row.error_message = locSummary.errors.join(" | ").slice(0, 4000);
         }
+
+        // ── Contacts: sync Epicor CustCnt → Shopify B2B company contacts.
+        if (!RUN_CONFIG.skipContacts) {
+          const contactSummary = await syncContactsForCustomer({
+            customer,
+            shopifyCompany,
+          });
+          applyContactSummaryToRow(row, contactSummary);
+        } else {
+          logger.info(
+            `   ⏭️  SKIP_CONTACTS=true — not syncing contacts for ${hl.cust(custId)}`
+          );
+        }
       }
     } else if (shopifyCompany && inactive) {
       // Shopify Admin GraphQL has no real "inactive/archive" state for B2B
@@ -1584,6 +2778,20 @@ async function processCustomer(customer, index, totalKnown) {
           row.reason = "Company synced; one or more locations failed";
           row.error_message = locSummary.errors.join(" | ").slice(0, 4000);
         }
+
+        // ── Contacts: sync Epicor CustCnt → Shopify B2B company contacts,
+        //    and reconcile (remove Shopify contacts not in Epicor).
+        if (!RUN_CONFIG.skipContacts) {
+          const contactSummary = await syncContactsForCustomer({
+            customer,
+            shopifyCompany,
+          });
+          applyContactSummaryToRow(row, contactSummary);
+        } else {
+          logger.info(
+            `   ⏭️  SKIP_CONTACTS=true — not syncing contacts for ${hl.cust(custId)}`
+          );
+        }
       }
     }
   } catch (err) {
@@ -1625,6 +2833,8 @@ async function main() {
     shopifyApiVersion: shopifyConfig.apiVersion,
     pageSize: RUN_CONFIG.pageSize,
     locationConcurrency: RUN_CONFIG.locationConcurrency,
+    contactConcurrency: RUN_CONFIG.contactConcurrency,
+    skipContacts: RUN_CONFIG.skipContacts,
     maxRetries: RUN_CONFIG.maxRetries,
     dryRun: RUN_CONFIG.dryRun,
     firstPageOnly: RUN_CONFIG.firstPageOnly,
@@ -1648,6 +2858,15 @@ async function main() {
     locations_created: 0,
     locations_skipped: 0,
     locations_failed: 0,
+    contacts_epicor_total: 0,
+    contacts_created: 0,
+    contacts_reused: 0,
+    contacts_skipped_no_email: 0,
+    contacts_skipped_inactive: 0,
+    contacts_reassigned: 0,
+    contacts_removed_stale: 0,
+    contacts_location_roles: 0,
+    contacts_failed: 0,
   };
 
   let pendingRows = [];
@@ -1722,6 +2941,15 @@ async function main() {
     totals.locations_created += Number(row.created_locations_count || 0);
     totals.locations_skipped += Number(row.skipped_locations_count || 0);
     totals.locations_failed += Number(row.failed_locations_count || 0);
+    totals.contacts_epicor_total += Number(row.contacts_epicor_total || 0);
+    totals.contacts_created += Number(row.contacts_created || 0);
+    totals.contacts_reused += Number(row.contacts_reused || 0);
+    totals.contacts_skipped_no_email += Number(row.contacts_skipped_no_email || 0);
+    totals.contacts_skipped_inactive += Number(row.contacts_skipped_inactive || 0);
+    totals.contacts_reassigned += Number(row.contacts_reassigned_from_other_company || 0);
+    totals.contacts_removed_stale += Number(row.contacts_removed_stale || 0);
+    totals.contacts_location_roles += Number(row.contacts_location_role_assignments || 0);
+    totals.contacts_failed += Number(row.contacts_failed || 0);
 
     pendingRows.push(row);
     if (pendingRows.length >= 25) await flushRows();
@@ -1745,6 +2973,16 @@ async function main() {
       logger.info(
         `   locations: created=${hl.ok(totals.locations_created)}  skipped=${hl.key(totals.locations_skipped)}  ` +
           `failed=${totals.locations_failed > 0 ? hl.bad(totals.locations_failed) : hl.ok(totals.locations_failed)}`
+      );
+      logger.info(
+        `   contacts: epicor=${hl.num(totals.contacts_epicor_total)}  ` +
+          `created=${hl.ok(totals.contacts_created)}  reused=${hl.ok(totals.contacts_reused)}  ` +
+          `no_email=${hl.key(totals.contacts_skipped_no_email)}  ` +
+          `inactive=${hl.key(totals.contacts_skipped_inactive)}  ` +
+          `reassigned=${hl.warn(totals.contacts_reassigned)}  ` +
+          `stale_removed=${hl.warn(totals.contacts_removed_stale)}  ` +
+          `loc_roles=${hl.ok(totals.contacts_location_roles)}  ` +
+          `failed=${totals.contacts_failed > 0 ? hl.bad(totals.contacts_failed) : hl.ok(totals.contacts_failed)}`
       );
       logger.blank();
     }

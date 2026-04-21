@@ -1,0 +1,1972 @@
+{
+    "openapi": "3.0.1",
+    "info": {
+      "title": "Erp.BO.CustCntSvc",
+      "version": "v2"
+    },
+    "servers": [
+      {
+        "url": "https://centralusdtapp69.epicorsaas.com/saas5298/api/v2/odata"
+      }
+    ],
+    "paths": {
+      "/{currentCompany}/Erp.BO.CustCntSvc/": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Get service document",
+          "description": "Get service document for the service",
+          "operationId": "GetServiceDocument",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK"
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/$metadata": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Get metadata document",
+          "description": "Get service OData metadata in XML format",
+          "operationId": "GetMetadata",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Returns metadata document",
+              "content": {
+                "application/xml": { }
+              }
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/CustCnts": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetRows to retrieve CustCnt items",
+          "description": "Get CustCnt items from the server using GetRows standard method.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetRows_CustCnts",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_expand"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            },
+            {
+              "$ref": "#/components/parameters/op_orderby"
+            },
+            {
+              "$ref": "#/components/parameters/op_top"
+            },
+            {
+              "$ref": "#/components/parameters/op_skip"
+            },
+            {
+              "$ref": "#/components/parameters/op_count"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntSetResponse"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntSetResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "post": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls UpdateExt to create new item for the service",
+          "description": "Calls UpdateExt to create new item for the service.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "Add_UpdateExt_CustCnts",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            }
+          ],
+          "requestBody": {
+            "description": "Input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCnt"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCnt"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "description": "Resource is created. Operation is successful.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCnt"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCnt"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Unable to deserialize entity. Input data is not in correct format."
+            },
+            "500": {
+              "description": "Internal server error. Server is unable to process the request."
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/CustCnts('{Company}',{CustNum},'{ShipToNum}',{ConNum})": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetRows to retrieve CustCnt item",
+          "description": "Calls GetRows to retrieve CustCnt item by specified keys.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetRows_CustCnt",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_expand"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCnt"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCnt"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "delete": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Call UpdateExt to delete CustCnt item",
+          "description": "Call UpdateExt to delete CustCnt item.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "Delete_UpdateExt_CustCnt",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          ],
+          "responses": {
+            "204": {
+              "description": "No Content. Operation is successful."
+            },
+            "500": {
+              "description": "Internal server error. Server is unable to process the request."
+            }
+          }
+        },
+        "patch": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls UpdateExt to update CustCnt for the service",
+          "description": "Calls UpdateExt to update CustCnt.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "UpdateExt_CustCnt",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          ],
+          "requestBody": {
+            "description": "Input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCnt"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCnt"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "204": {
+              "description": "No Content. Operation is successful."
+            },
+            "400": {
+              "description": "Unable to deserialize entity. Input data is not in correct format."
+            },
+            "500": {
+              "description": "Internal server error. Server is unable to process the request."
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/CustCnts('{Company}',{CustNum},'{ShipToNum}',{ConNum})/CustCntAttches": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetRows to retrieve CustCntAttch items",
+          "description": "Get CustCntAttch items from the server using GetRows standard method.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetRows_CustCnt_CustCntAttches",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            },
+            {
+              "$ref": "#/components/parameters/op_orderby"
+            },
+            {
+              "$ref": "#/components/parameters/op_top"
+            },
+            {
+              "$ref": "#/components/parameters/op_skip"
+            },
+            {
+              "$ref": "#/components/parameters/op_count"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttchSetResponse"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttchSetResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/CustCnts('{Company}',{CustNum},'{ShipToNum}',{ConNum})/CustCntAttches('{Company}',{CustNum},'{ShipToNum}',{ConNum},{DrawingSeq})": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetRows to retrieve CustCntAttch item",
+          "description": "Calls GetRows to retrieve CustCntAttch item by specified keys.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetRows_CustCnt_CustCntAttch",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "DrawingSeq",
+              "in": "path",
+              "description": "DrawingSeq",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttch"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttch"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/CustCntAttches": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetRows to retrieve CustCntAttch items",
+          "description": "Get CustCntAttch items from the server using GetRows standard method.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetRows_CustCntAttches",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            },
+            {
+              "$ref": "#/components/parameters/op_orderby"
+            },
+            {
+              "$ref": "#/components/parameters/op_top"
+            },
+            {
+              "$ref": "#/components/parameters/op_skip"
+            },
+            {
+              "$ref": "#/components/parameters/op_count"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttchSetResponse"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttchSetResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "post": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls UpdateExt to create new item for the service",
+          "description": "Calls UpdateExt to create new item for the service.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "Add_UpdateExt_CustCntAttches",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            }
+          ],
+          "requestBody": {
+            "description": "Input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCntAttch"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCntAttch"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "description": "Resource is created. Operation is successful.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttch"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttch"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Unable to deserialize entity. Input data is not in correct format."
+            },
+            "500": {
+              "description": "Internal server error. Server is unable to process the request."
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/CustCntAttches('{Company}',{CustNum},'{ShipToNum}',{ConNum},{DrawingSeq})": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetRows to retrieve CustCntAttch item",
+          "description": "Calls GetRows to retrieve CustCntAttch item by specified keys.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetRows_CustCntAttch",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "DrawingSeq",
+              "in": "path",
+              "description": "DrawingSeq",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttch"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntAttch"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "delete": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Call UpdateExt to delete CustCntAttch item",
+          "description": "Call UpdateExt to delete CustCntAttch item.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "Delete_UpdateExt_CustCntAttch",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "DrawingSeq",
+              "in": "path",
+              "description": "DrawingSeq",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          ],
+          "responses": {
+            "204": {
+              "description": "No Content. Operation is successful."
+            },
+            "500": {
+              "description": "Internal server error. Server is unable to process the request."
+            }
+          }
+        },
+        "patch": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls UpdateExt to update CustCntAttch for the service",
+          "description": "Calls UpdateExt to update CustCntAttch.<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "UpdateExt_CustCntAttch",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "name": "Company",
+              "in": "path",
+              "description": "Company",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "CustNum",
+              "in": "path",
+              "description": "CustNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "ShipToNum",
+              "in": "path",
+              "description": "ShipToNum",
+              "required": true,
+              "allowEmptyValue": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "ConNum",
+              "in": "path",
+              "description": "ConNum",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            {
+              "name": "DrawingSeq",
+              "in": "path",
+              "description": "DrawingSeq",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          ],
+          "requestBody": {
+            "description": "Input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCntAttch"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erp.CustCntAttch"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "204": {
+              "description": "No Content. Operation is successful."
+            },
+            "400": {
+              "description": "Unable to deserialize entity. Input data is not in correct format."
+            },
+            "500": {
+              "description": "Internal server error. Server is unable to process the request."
+            }
+          }
+        }
+      },
+      "/{currentCompany}/Erp.BO.CustCntSvc/List": {
+        "get": {
+          "tags": [
+            "OData"
+          ],
+          "summary": "Calls GetList for the service",
+          "description": "Get list of items<div>OData-specific rules:<ul><li>OData $-parameters data are case-sensitive</li><li>String parameters should be specified in single quotes</li></ul></div>",
+          "operationId": "GetList",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/currentCompany"
+            },
+            {
+              "$ref": "#/components/parameters/X-API-Key"
+            },
+            {
+              "$ref": "#/components/parameters/op_select"
+            },
+            {
+              "$ref": "#/components/parameters/op_filter"
+            },
+            {
+              "$ref": "#/components/parameters/op_orderby"
+            },
+            {
+              "$ref": "#/components/parameters/op_top"
+            },
+            {
+              "$ref": "#/components/parameters/op_skip"
+            },
+            {
+              "$ref": "#/components/parameters/op_count"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntListItemSetResponse"
+                  }
+                },
+                "text/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Erp.CustCntListItemSetResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "schemas": {
+        "Erp.CustCnt": {
+          "type": "object",
+          "properties": {
+            "Company": {
+              "type": "string",
+              "description": "Company Identifier."
+            },
+            "CustNum": {
+              "type": "integer",
+              "description": "The Customer.CustNum value of the customer that the contact is related to.",
+              "format": "int32"
+            },
+            "ShipToNum": {
+              "type": "string",
+              "description": "The ShipTo.ShipToNum of the Ship To that the customer"
+            },
+            "ConNum": {
+              "type": "integer",
+              "description": "A system generated number used to uniquely identify the contact record for the related customer or ship to. When creating new contacts the system reads the last existing contact record for the customer or ship to being processed and then uses its number plus one as the number for the new contact.",
+              "format": "int32"
+            },
+            "Name": {
+              "type": "string",
+              "description": "Full name of the contact."
+            },
+            "Func": {
+              "type": "string",
+              "description": "Used to enter a short description that should indicate what the contacts main function is. Ex: Shipping, Buyer, Engineer. This is an optional field."
+            },
+            "FaxNum": {
+              "type": "string",
+              "description": "The contact's fax number. When displaying phone numbers of contacts the system will use the phone number found in the Customer or Shipto file if the contact's number is blank."
+            },
+            "PhoneNum": {
+              "type": "string",
+              "description": "The contact's business telephone number. When displaying phone numbers of contacts the system will use the phone number found in the Customer or Shipto file if the contacts number is blank."
+            },
+            "SpecialAddress": {
+              "type": "boolean",
+              "description": "A logical flag that indicates if this contact has a mailing address different from the one found in the associated Customer master. This flag is only applicable to contacts related to the Customer. That is where CustCnt.ShipToNum = \"\". During maintenance if this flag is Yes then access is allowed to the Address, City, State, Zip and Country fields. Otherwise those fields are protected. During maintenance when SpecialAddress is toggled to Yes and the address1 field is blank the program defaults all the address fields equal to the customers, thinking that much of it will be the same, saving keying time. When it's toggled to \"No\", then program sets all the address field to blank."
+            },
+            "Address1": {
+              "type": "string",
+              "description": "Line 1 of the contact's mailing address if different from that of the customer. The contacts associated with a customer (not ship to) are allowed to have address, city, state, zip and country fields that are different from that of their associated customer. If not blank, these address fields are printed on the Quote form; otherwise the customer address is used."
+            },
+            "Address2": {
+              "type": "string",
+              "description": "Line 2 of the contact's mailing address if different from that of the customer. (See Address1 for additional information)."
+            },
+            "Address3": {
+              "type": "string",
+              "description": "Line 3 of the contact's mailing address if different from that of the customer. (See Address1 for additional information)."
+            },
+            "City": {
+              "type": "string",
+              "description": "The city portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "State": {
+              "type": "string",
+              "description": "The state or province portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "Zip": {
+              "type": "string",
+              "description": "The zip or postal code portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "Country": {
+              "type": "string",
+              "description": "The Country portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "CorpName": {
+              "type": "string",
+              "description": "The company name of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "EMailAddress": {
+              "type": "string",
+              "description": "The contact's email address."
+            },
+            "CountryNum": {
+              "type": "integer",
+              "description": "The Country.CountryNum value of the country selected for the contact's mailing address.",
+              "format": "int32"
+            },
+            "SFPortalPassword": {
+              "type": "string",
+              "description": "Customer Connect password for this contact."
+            },
+            "SFUser": {
+              "type": "boolean",
+              "description": "Indicates if able to create Orders"
+            },
+            "PortalUser": {
+              "type": "boolean",
+              "description": "Indicates if \"Order History\" is functional"
+            },
+            "RoleCode": {
+              "type": "string",
+              "description": "RoleCD.RoleCode value of the role assigned to the contact."
+            },
+            "CellPhoneNum": {
+              "type": "string",
+              "description": "The contact's cell phone number."
+            },
+            "PagerNum": {
+              "type": "string",
+              "description": "The contact's pager number."
+            },
+            "HomeNum": {
+              "type": "string",
+              "description": "The contact's Home number."
+            },
+            "AltNum": {
+              "type": "string",
+              "description": "The contact's alternate phone number."
+            },
+            "ContactTitle": {
+              "type": "string",
+              "description": "The contact's title."
+            },
+            "ReportsTo": {
+              "type": "string",
+              "description": "The name of the person this contact reports to."
+            },
+            "Comment": {
+              "type": "string",
+              "description": "Comments are intended to be internal comments about a specific contact."
+            },
+            "NoContact": {
+              "type": "boolean",
+              "description": "Indicates whether or not this contact should be included in marketing lists."
+            },
+            "CreateDate": {
+              "type": "string",
+              "description": "The date that the contact was entered into the database.",
+              "format": "date-time"
+            },
+            "CreateDcdUserID": {
+              "type": "string",
+              "description": "The UserFile.DCDUserID of the user that entered the contact into the database."
+            },
+            "ChangeDate": {
+              "type": "string",
+              "description": "**NOTE cannot find any code that maintains this field.",
+              "format": "date-time"
+            },
+            "ChangeDcdUserID": {
+              "type": "string",
+              "description": "**NOTE cannot find any code that maintains this field."
+            },
+            "Inactive": {
+              "type": "boolean",
+              "description": "Determines whether or not this contact can be referenced on a quote, order, packing slip or invoice."
+            },
+            "FirstName": {
+              "type": "string",
+              "description": "Contact's first name."
+            },
+            "MiddleName": {
+              "type": "string",
+              "description": "Contact's middle name."
+            },
+            "LastName": {
+              "type": "string",
+              "description": "Contact's last name."
+            },
+            "Prefix": {
+              "type": "string",
+              "description": "Contact's prefix."
+            },
+            "Suffix": {
+              "type": "string",
+              "description": "Contact's suffix."
+            },
+            "Initials": {
+              "type": "string",
+              "description": "Contact's initials."
+            },
+            "ExternalID": {
+              "type": "string",
+              "description": "External ID"
+            },
+            "GlobalLock": {
+              "type": "boolean",
+              "description": "Determines whether or not this record receives global updates"
+            },
+            "ShowInputPrice": {
+              "type": "boolean",
+              "description": "If TRUE then the input prices will be shown in the Customer Connect Configuration Review."
+            },
+            "ChangeTime": {
+              "type": "integer",
+              "description": "The time that the record was last change (seconds since midnight)",
+              "format": "int32"
+            },
+            "ChangedBy": {
+              "type": "string",
+              "description": "Userid of user who made the last change to this record."
+            },
+            "MasterCustNum": {
+              "type": "integer",
+              "description": "Pertains to Alternate Shipto. Contains the CustNum of the CustCnt record that is the \"Master\". Changes made to the Master, are replicated to the alternates.",
+              "format": "int32"
+            },
+            "MasterShipToNum": {
+              "type": "string",
+              "description": "Pertains to Alternate Shipto. Contains the ShipToNum of the CustCnt record that is the \"Master\". Changes made to the Master, are replicated to the alternates."
+            },
+            "MasterConNum": {
+              "type": "integer",
+              "description": "Pertains to Alternate Shipto. Contains the ConNum of the CustCnt record that is the \"Master\". Changes made to the Master, are replicated to the alternates.",
+              "format": "int32"
+            },
+            "PerConID": {
+              "type": "integer",
+              "description": "Unique identifier for a PerCon record.",
+              "format": "int32"
+            },
+            "SyncNameToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Name fields on PerCon won't affect this record and vice versa."
+            },
+            "SyncAddressToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Address fields on PerCon won't affect this record and visa versa."
+            },
+            "SyncPhoneToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Phone fields on PerCon won't affect this record and vice versa."
+            },
+            "SyncEmailToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the email fields on PerCon won't affect this record and vice versa."
+            },
+            "SyncLinksToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Web link fields on PerCon won't affect this record and vice versa."
+            },
+            "WebSite": {
+              "type": "string",
+              "description": "Contact's Website."
+            },
+            "IM": {
+              "type": "string",
+              "description": "Contact's IM."
+            },
+            "Twitter": {
+              "type": "string",
+              "description": "Contact's Twitter."
+            },
+            "LinkedIn": {
+              "type": "string",
+              "description": "Contact's LinkedIn."
+            },
+            "FaceBook": {
+              "type": "string",
+              "description": "Contact's FaceBook."
+            },
+            "WebLink1": {
+              "type": "string",
+              "description": "User defined Link 1."
+            },
+            "WebLink2": {
+              "type": "string",
+              "description": "User defined Link 2."
+            },
+            "WebLink3": {
+              "type": "string",
+              "description": "User defined Link 3."
+            },
+            "WebLink4": {
+              "type": "string",
+              "description": "User defined Link 4."
+            },
+            "WebLink5": {
+              "type": "string",
+              "description": "User defined Link 5."
+            },
+            "PerConAddress": {
+              "type": "boolean",
+              "description": "Indicates if the Person/Contact address should be used as the Special Quoting Address."
+            },
+            "SysRevID": {
+              "type": "integer",
+              "description": "Revision identifier for this row. It is incremented upon each write.",
+              "format": "int64"
+            },
+            "SysRowID": {
+              "type": "string",
+              "description": "Unique identifier for this row. The value is a GUID.",
+              "format": "uuid",
+              "example": "00000000-0000-0000-0000-000000000000"
+            },
+            "SyncToExternalCRM": {
+              "type": "boolean",
+              "description": "This field defines if the customer contact  is synchronized to an External CRM."
+            },
+            "ExternalCRMCustomerID": {
+              "type": "string",
+              "description": "This field holds the id of this customer in the External CRM"
+            },
+            "ExternalCRMContactID": {
+              "type": "string",
+              "description": "This field holds the id of this customer contact in the External CRM"
+            },
+            "RoleDescription": {
+              "type": "string"
+            },
+            "PrimaryBilling": {
+              "type": "boolean",
+              "description": " This check box indicates that this contact is the customer's main billing contact. \r\nWhen an AR invoice is created for this customer, this contact's name will automatically appear on the invoice."
+            },
+            "PrimaryPurchasing": {
+              "type": "boolean",
+              "description": " This check box indicates that this contact is the customer's main purchasing contact. \r\nWhen a quote or sales order is created for this customer, this contact's name will automatically appear on the order or quote."
+            },
+            "PrimaryShipping": {
+              "type": "boolean",
+              "description": " This check box indicates that this contact is the customer's main shipping contact. \r\nWhen a packing slip is created for this customer, this contact's name will automatically appear on the slip."
+            },
+            "GlbFlag": {
+              "type": "boolean",
+              "description": "Indicates if the Contact is global (Master or Linked)"
+            },
+            "AttrCodeList": {
+              "type": "string",
+              "description": "delimited list of CustCnAttr codes"
+            },
+            "GlbLink": {
+              "type": "string",
+              "description": "GlbCustCnt fields in a linked list to find the linking record"
+            },
+            "ContactName": {
+              "type": "string",
+              "description": "Used for ContactTracker.  This is needed so the UI can relate the Contact Tracker tables together."
+            },
+            "PerConName": {
+              "type": "string"
+            },
+            "BitFlag": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "CustNumName": {
+              "type": "string"
+            },
+            "CustNumBTName": {
+              "type": "string"
+            },
+            "CustNumCustID": {
+              "type": "string"
+            },
+            "MasterCustNumBTName": {
+              "type": "string"
+            },
+            "MasterCustNumName": {
+              "type": "string"
+            },
+            "MasterCustNumCustID": {
+              "type": "string"
+            },
+            "RowMod": {
+              "type": "string",
+              "description": "RowMod"
+            },
+            "UD_SysRevID": {
+              "type": "string",
+              "format": "binary"
+            },
+            "LightingContact_c": {
+              "type": "boolean"
+            },
+            "LightingShipToContact_c": {
+              "type": "boolean"
+            },
+            "LastModify4Dynamics_c": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "DynamicsSynched_c": {
+              "type": "boolean"
+            },
+            "DynamicsSyncPending_c": {
+              "type": "boolean"
+            },
+            "DynamicsID_c": {
+              "type": "string"
+            },
+            "DynamicsContactID_c": {
+              "type": "string",
+              "format": "uuid",
+              "example": "00000000-0000-0000-0000-000000000000"
+            },
+            "CustCntAttches": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Erp.CustCntAttch"
+              }
+            }
+          }
+        },
+        "Erp.CustCntAttch": {
+          "type": "object",
+          "properties": {
+            "Company": {
+              "type": "string"
+            },
+            "CustNum": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "ShipToNum": {
+              "type": "string"
+            },
+            "ConNum": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "DrawingSeq": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "XFileRefNum": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "SysRevID": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "SysRowID": {
+              "type": "string",
+              "format": "uuid",
+              "example": "00000000-0000-0000-0000-000000000000"
+            },
+            "ForeignSysRowID": {
+              "type": "string",
+              "format": "uuid",
+              "example": "00000000-0000-0000-0000-000000000000"
+            },
+            "DrawDesc": {
+              "type": "string"
+            },
+            "FileName": {
+              "type": "string"
+            },
+            "PDMDocID": {
+              "type": "string"
+            },
+            "DocTypeID": {
+              "type": "string"
+            },
+            "RowMod": {
+              "type": "string",
+              "description": "RowMod"
+            }
+          }
+        },
+        "Erp.CustCntAttchSetResponse": {
+          "type": "object",
+          "properties": {
+            "@odata.context": {
+              "type": "string"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Erp.CustCntAttch"
+              }
+            }
+          }
+        },
+        "Erp.CustCntListItem": {
+          "type": "object",
+          "properties": {
+            "Company": {
+              "type": "string",
+              "description": "Company Identifier."
+            },
+            "CustNum": {
+              "type": "integer",
+              "description": "The Customer.CustNum value of the customer that the contact is related to.",
+              "format": "int32"
+            },
+            "ShipToNum": {
+              "type": "string",
+              "description": "The ShipTo.ShipToNum of the Ship To that the customer"
+            },
+            "ConNum": {
+              "type": "integer",
+              "description": "A system generated number used to uniquely identify the contact record for the related customer or ship to. When creating new contacts the system reads the last existing contact record for the customer or ship to being processed and then uses its number plus one as the number for the new contact.",
+              "format": "int32"
+            },
+            "Name": {
+              "type": "string",
+              "description": "Full name of the contact."
+            },
+            "Func": {
+              "type": "string",
+              "description": "Used to enter a short description that should indicate what the contacts main function is. Ex: Shipping, Buyer, Engineer. This is an optional field."
+            },
+            "FaxNum": {
+              "type": "string",
+              "description": "The contact's fax number. When displaying phone numbers of contacts the system will use the phone number found in the Customer or Shipto file if the contact's number is blank."
+            },
+            "PhoneNum": {
+              "type": "string",
+              "description": "The contact's business telephone number. When displaying phone numbers of contacts the system will use the phone number found in the Customer or Shipto file if the contacts number is blank."
+            },
+            "SpecialAddress": {
+              "type": "boolean",
+              "description": "A logical flag that indicates if this contact has a mailing address different from the one found in the associated Customer master. This flag is only applicable to contacts related to the Customer. That is where CustCnt.ShipToNum = \"\". During maintenance if this flag is Yes then access is allowed to the Address, City, State, Zip and Country fields. Otherwise those fields are protected. During maintenance when SpecialAddress is toggled to Yes and the address1 field is blank the program defaults all the address fields equal to the customers, thinking that much of it will be the same, saving keying time. When it's toggled to \"No\", then program sets all the address field to blank."
+            },
+            "Address1": {
+              "type": "string",
+              "description": "Line 1 of the contact's mailing address if different from that of the customer. The contacts associated with a customer (not ship to) are allowed to have address, city, state, zip and country fields that are different from that of their associated customer. If not blank, these address fields are printed on the Quote form; otherwise the customer address is used."
+            },
+            "Address2": {
+              "type": "string",
+              "description": "Line 2 of the contact's mailing address if different from that of the customer. (See Address1 for additional information)."
+            },
+            "Address3": {
+              "type": "string",
+              "description": "Line 3 of the contact's mailing address if different from that of the customer. (See Address1 for additional information)."
+            },
+            "City": {
+              "type": "string",
+              "description": "The city portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "State": {
+              "type": "string",
+              "description": "The state or province portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "Zip": {
+              "type": "string",
+              "description": "The zip or postal code portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "Country": {
+              "type": "string",
+              "description": "The Country portion of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "CorpName": {
+              "type": "string",
+              "description": "The company name of the contact's mailing address. (See Address1 for additional information)."
+            },
+            "EMailAddress": {
+              "type": "string",
+              "description": "The contact's email address."
+            },
+            "CountryNum": {
+              "type": "integer",
+              "description": "The Country.CountryNum value of the country selected for the contact's mailing address.",
+              "format": "int32"
+            },
+            "SFPortalPassword": {
+              "type": "string",
+              "description": "Customer Connect password for this contact."
+            },
+            "SFUser": {
+              "type": "boolean",
+              "description": "Indicates if able to create Orders"
+            },
+            "PortalUser": {
+              "type": "boolean",
+              "description": "Indicates if \"Order History\" is functional"
+            },
+            "RoleCode": {
+              "type": "string",
+              "description": "RoleCD.RoleCode value of the role assigned to the contact."
+            },
+            "CellPhoneNum": {
+              "type": "string",
+              "description": "The contact's cell phone number."
+            },
+            "PagerNum": {
+              "type": "string",
+              "description": "The contact's pager number."
+            },
+            "HomeNum": {
+              "type": "string",
+              "description": "The contact's Home number."
+            },
+            "AltNum": {
+              "type": "string",
+              "description": "The contact's alternate phone number."
+            },
+            "ContactTitle": {
+              "type": "string",
+              "description": "The contact's title."
+            },
+            "ReportsTo": {
+              "type": "string",
+              "description": "The name of the person this contact reports to."
+            },
+            "Comment": {
+              "type": "string",
+              "description": "Comments are intended to be internal comments about a specific contact."
+            },
+            "NoContact": {
+              "type": "boolean",
+              "description": "Indicates whether or not this contact should be included in marketing lists."
+            },
+            "CreateDate": {
+              "type": "string",
+              "description": "The date that the contact was entered into the database.",
+              "format": "date-time"
+            },
+            "CreateDcdUserID": {
+              "type": "string",
+              "description": "The UserFile.DCDUserID of the user that entered the contact into the database."
+            },
+            "ChangeDate": {
+              "type": "string",
+              "description": "**NOTE cannot find any code that maintains this field.",
+              "format": "date-time"
+            },
+            "ChangeDcdUserID": {
+              "type": "string",
+              "description": "**NOTE cannot find any code that maintains this field."
+            },
+            "Inactive": {
+              "type": "boolean",
+              "description": "Determines whether or not this contact can be referenced on a quote, order, packing slip or invoice."
+            },
+            "FirstName": {
+              "type": "string",
+              "description": "Contact's first name."
+            },
+            "MiddleName": {
+              "type": "string",
+              "description": "Contact's middle name."
+            },
+            "LastName": {
+              "type": "string",
+              "description": "Contact's last name."
+            },
+            "Prefix": {
+              "type": "string",
+              "description": "Contact's prefix."
+            },
+            "Suffix": {
+              "type": "string",
+              "description": "Contact's suffix."
+            },
+            "Initials": {
+              "type": "string",
+              "description": "Contact's initials."
+            },
+            "ExternalID": {
+              "type": "string",
+              "description": "External ID"
+            },
+            "GlobalLock": {
+              "type": "boolean",
+              "description": "Determines whether or not this record receives global updates"
+            },
+            "ShowInputPrice": {
+              "type": "boolean",
+              "description": "If TRUE then the input prices will be shown in the Customer Connect Configuration Review."
+            },
+            "ChangeTime": {
+              "type": "integer",
+              "description": "The time that the record was last change (seconds since midnight)",
+              "format": "int32"
+            },
+            "ChangedBy": {
+              "type": "string",
+              "description": "Userid of user who made the last change to this record."
+            },
+            "MasterCustNum": {
+              "type": "integer",
+              "description": "Pertains to Alternate Shipto. Contains the CustNum of the CustCnt record that is the \"Master\". Changes made to the Master, are replicated to the alternates.",
+              "format": "int32"
+            },
+            "MasterShipToNum": {
+              "type": "string",
+              "description": "Pertains to Alternate Shipto. Contains the ShipToNum of the CustCnt record that is the \"Master\". Changes made to the Master, are replicated to the alternates."
+            },
+            "MasterConNum": {
+              "type": "integer",
+              "description": "Pertains to Alternate Shipto. Contains the ConNum of the CustCnt record that is the \"Master\". Changes made to the Master, are replicated to the alternates.",
+              "format": "int32"
+            },
+            "PerConID": {
+              "type": "integer",
+              "description": "Unique identifier for a PerCon record.",
+              "format": "int32"
+            },
+            "SyncNameToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Name fields on PerCon won't affect this record and vice versa."
+            },
+            "SyncAddressToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Address fields on PerCon won't affect this record and visa versa."
+            },
+            "SyncPhoneToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Phone fields on PerCon won't affect this record and vice versa."
+            },
+            "SyncEmailToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the email fields on PerCon won't affect this record and vice versa."
+            },
+            "SyncLinksToPerCon": {
+              "type": "boolean",
+              "description": "Default to True. If unchecked then changes to the Web link fields on PerCon won't affect this record and vice versa."
+            },
+            "WebSite": {
+              "type": "string",
+              "description": "Contact's Website."
+            },
+            "IM": {
+              "type": "string",
+              "description": "Contact's IM."
+            },
+            "Twitter": {
+              "type": "string",
+              "description": "Contact's Twitter."
+            },
+            "LinkedIn": {
+              "type": "string",
+              "description": "Contact's LinkedIn."
+            },
+            "FaceBook": {
+              "type": "string",
+              "description": "Contact's FaceBook."
+            },
+            "WebLink1": {
+              "type": "string",
+              "description": "User defined Link 1."
+            },
+            "WebLink2": {
+              "type": "string",
+              "description": "User defined Link 2."
+            },
+            "WebLink3": {
+              "type": "string",
+              "description": "User defined Link 3."
+            },
+            "WebLink4": {
+              "type": "string",
+              "description": "User defined Link 4."
+            },
+            "WebLink5": {
+              "type": "string",
+              "description": "User defined Link 5."
+            },
+            "PerConAddress": {
+              "type": "boolean",
+              "description": "Indicates if the Person/Contact address should be used as the Special Quoting Address."
+            },
+            "SysRevID": {
+              "type": "integer",
+              "description": "Revision identifier for this row. It is incremented upon each write.",
+              "format": "int64"
+            },
+            "SysRowID": {
+              "type": "string",
+              "description": "Unique identifier for this row. The value is a GUID.",
+              "format": "uuid",
+              "example": "00000000-0000-0000-0000-000000000000"
+            },
+            "RoleDescription": {
+              "type": "string"
+            },
+            "PrimaryBilling": {
+              "type": "boolean"
+            },
+            "PrimaryPurchasing": {
+              "type": "boolean"
+            },
+            "PrimaryShipping": {
+              "type": "boolean"
+            },
+            "GlbFlag": {
+              "type": "boolean",
+              "description": "Indicates if the Contact is global (Master or Linked)"
+            },
+            "AttrCodeList": {
+              "type": "string",
+              "description": "delimited list of CustCnAttr codes"
+            },
+            "GlbLink": {
+              "type": "string",
+              "description": "GlbCustCnt fields in a linked list to find the linking record"
+            },
+            "ContactName": {
+              "type": "string",
+              "description": "Used for ContactTracker.  This is needed so the UI can relate the Contact Tracker tables together."
+            },
+            "PerConName": {
+              "type": "string"
+            },
+            "CustNumCustID": {
+              "type": "string",
+              "description": "A user defined external customer ID.  This must be unique within the file.  This ID may be used in certain screen displays or reports where a full customer name is inappropriate. Therefore users should use meaningful characters as they would in any other master file. This master file key is a little different in that the user can change. This change is allowed because the system is not using the CustID as a foreign key in any other file.  Rather it uses the CustNum field which is assigned to th"
+            },
+            "CustNumName": {
+              "type": "string",
+              "description": "The full name of the customer."
+            },
+            "CustNumBTName": {
+              "type": "string",
+              "description": "The Bill To name of this customer. Will be used by the AR module for Invoices. This defaults to the Customer.Name but can be overrode by the user."
+            },
+            "MasterCustNumCustID": {
+              "type": "string",
+              "description": "A user defined external customer ID.  This must be unique within the file.  This ID may be used in certain screen displays or reports where a full customer name is inappropriate. Therefore users should use meaningful characters as they would in any other master file. This master file key is a little different in that the user can change. This change is allowed because the system is not using the CustID as a foreign key in any other file.  Rather it uses the CustNum field which is assigned to th"
+            },
+            "MasterCustNumName": {
+              "type": "string",
+              "description": "The full name of the customer."
+            },
+            "MasterCustNumBTName": {
+              "type": "string",
+              "description": "The Bill To name of this customer. Will be used by the AR module for Invoices. This defaults to the Customer.Name but can be overrode by the user."
+            },
+            "RowMod": {
+              "type": "string",
+              "description": "RowMod"
+            },
+            "UD_SysRevID": {
+              "type": "string",
+              "format": "binary"
+            },
+            "LightingContact_c": {
+              "type": "boolean"
+            },
+            "LightingShipToContact_c": {
+              "type": "boolean"
+            },
+            "LastModify4Dynamics_c": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "DynamicsSynched_c": {
+              "type": "boolean"
+            },
+            "DynamicsSyncPending_c": {
+              "type": "boolean"
+            },
+            "DynamicsID_c": {
+              "type": "string"
+            },
+            "DynamicsContactID_c": {
+              "type": "string",
+              "format": "uuid",
+              "example": "00000000-0000-0000-0000-000000000000"
+            }
+          }
+        },
+        "Erp.CustCntListItemSetResponse": {
+          "type": "object",
+          "properties": {
+            "@odata.context": {
+              "type": "string"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Erp.CustCntListItem"
+              }
+            }
+          }
+        },
+        "Erp.CustCntSetResponse": {
+          "type": "object",
+          "properties": {
+            "@odata.context": {
+              "type": "string"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Erp.CustCnt"
+              }
+            }
+          }
+        }
+      },
+      "parameters": {
+        "currentCompany": {
+          "name": "currentCompany",
+          "in": "path",
+          "description": "ID of current company",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        "X-API-Key": {
+          "name": "X-API-Key",
+          "in": "header",
+          "description": "Epicor API Key",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        "op_select": {
+          "name": "$select",
+          "in": "query",
+          "description": "OData select comma delimited list of fields",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "op_expand": {
+          "name": "$expand",
+          "in": "query",
+          "description": "OData expand to child",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "op_filter": {
+          "name": "$filter",
+          "in": "query",
+          "description": "OData filter results",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "op_orderby": {
+          "name": "$orderby",
+          "in": "query",
+          "description": "OData sort results",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "op_top": {
+          "name": "$top",
+          "in": "query",
+          "description": "OData top results",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        "op_skip": {
+          "name": "$skip",
+          "in": "query",
+          "description": "OData skip results",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        "op_count": {
+          "name": "$count",
+          "in": "query",
+          "description": "odata.count value",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "tags": [
+      {
+        "name": "OData",
+        "description": "OData operations, built on GetRows, GetList and UpdateExt standard methods"
+      }
+    ]
+  }
