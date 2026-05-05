@@ -64,7 +64,7 @@
  * Optional: SHOPIFY_API_VERSION, EPICOR_PAGE_SIZE, EPICOR_TIMEOUT_MS, SHOPIFY_TIMEOUT_MS,
  *   MAX_RETRIES, RETRY_BASE_DELAY_MS, PER_ITEM_DELAY_MS, PER_PAGE_DELAY_MS,
  *   LOCATION_CONCURRENCY, CONTACT_CONCURRENCY, CONTACT_PAGE_SIZE, SKIP_CONTACTS,
- *   MAX_ITEMS, DRY_RUN, FIRST_PAGE_ONLY, REPORT_DIR, NO_COLOR, DEBUG
+ *   MAX_ITEMS, DRY_RUN, FIRST_PAGE_ONLY, COMPANY_EXTERNAL_ID, REPORT_DIR, NO_COLOR, DEBUG
  */
 
 const { requireEnv } = require("./load-env");
@@ -144,6 +144,9 @@ const RUN_CONFIG = {
   maxItems: parseInt(process.env.MAX_ITEMS || "0", 10),
   dryRun: /^(1|true|yes)$/i.test(process.env.DRY_RUN || ""),
   firstPageOnly: /^(1|true|yes)$/i.test(process.env.FIRST_PAGE_ONLY || ""),
+  // Epicor CustNum (digits only) — same value stored as Shopify Company.externalId.
+  // When set, Phase 1 fetches only that row.
+  companyExternalId: String(process.env.COMPANY_EXTERNAL_ID || "").trim(),
   csvDir:
     process.env.REPORT_DIR ||
     path.join(__dirname, "fluidra_sync_reports"),
@@ -285,6 +288,16 @@ function odataEscapeString(v) {
   return String(v).replace(/'/g, "''");
 }
 
+/**
+ * OData $filter for COMPANY_EXTERNAL_ID mode: CustNum only (Shopify externalId).
+ * Caller must validate digits-only before invoking when env is set.
+ */
+function buildSingleCompanyODataFilter(externalIdRaw) {
+  const s = String(externalIdRaw || "").trim();
+  if (!s) return null;
+  return `CustNum eq ${Number(s)}`;
+}
+
 function isRetryableAxiosError(err) {
   if (!err) return false;
   if (
@@ -395,8 +408,9 @@ async function epicorHealthCheck() {
  * Fetch one Customers page with the ShipToes child collection expanded.
  * Spec: GET /{currentCompany}/Erp.BO.CustomerSvc/Customers
  * Keyset pagination is on CustNum (numeric, monotonic, unique within Company).
+ * Pass `fixedFilter` for single-customer mode (mutually exclusive with afterCustNum).
  */
-async function fetchEpicorCustomersPage({ top, afterCustNum }) {
+async function fetchEpicorCustomersPage({ top, afterCustNum, fixedFilter }) {
   const url = `${epicorConfig.baseUrl}/${encodeURIComponent(
     epicorConfig.company
   )}/Erp.BO.CustomerSvc/Customers`;
@@ -447,7 +461,9 @@ async function fetchEpicorCustomersPage({ top, afterCustNum }) {
   ].join(",");
 
   const filters = [];
-  if (afterCustNum != null) {
+  if (fixedFilter) {
+    filters.push(fixedFilter);
+  } else if (afterCustNum != null) {
     filters.push(`CustNum gt ${Number(afterCustNum)}`);
   }
 
@@ -462,8 +478,11 @@ async function fetchEpicorCustomersPage({ top, afterCustNum }) {
   };
   if (filters.length) params.$filter = filters.join(" and ");
 
+  const retryLabel = fixedFilter
+    ? `epicor:Customers single filter=${fixedFilter} top=${top}`
+    : `epicor:Customers page after=${afterCustNum ?? "(start)"} top=${top}`;
   const { result } = await withRetry(
-    `epicor:Customers page after=${afterCustNum ?? "(start)"} top=${top}`,
+    retryLabel,
     async () => {
       const res = await axios.get(url, {
         headers: epicorAuthHeaders(),
@@ -639,6 +658,38 @@ async function fetchEpicorContactsForCustomer(customer) {
 }
 
 /**
+ * Top up ShipToes for any customer that hit the inline-expand cap. We detect
+ * "potentially truncated" by an exact-equality on the cap; in theory a customer
+ * could have *exactly* the cap and trigger one wasted round-trip that returns
+ * zero, which is acceptable.
+ */
+async function topUpShipToesIfTruncated(items) {
+  const truncated = items.filter(
+    (c) =>
+      Array.isArray(c.ShipToes) &&
+      c.ShipToes.length === RUN_CONFIG.shipToExpandTop
+  );
+  if (truncated.length === 0) return;
+  logger.info(
+    `   ↪︎ ${hl.num(truncated.length)} customer(s) on this page hit the ShipTo expand cap (${RUN_CONFIG.shipToExpandTop}) — fetching additional pages`
+  );
+  await asyncPool(3, truncated, async (cust) => {
+    const more = await fetchRemainingShipToesForCustomer(
+      cust,
+      RUN_CONFIG.shipToExpandTop
+    );
+    if (more.length > 0) {
+      cust.ShipToes.push(...more);
+      logger.info(
+        `     ↪︎ ${hl.cust(cust.CustID)} (CustNum=${cust.CustNum}): +${hl.num(
+          more.length
+        )} extra ShipToes  —  total ${hl.num(cust.ShipToes.length)}`
+      );
+    }
+  });
+}
+
+/**
  * Fetch every Customer (with expanded ShipToes) using keyset pagination on
  * CustNum. Epicor's @odata.count is unreliable, so we rely on short pages /
  * MAX_ITEMS to know when to stop — same pattern as the products sync.
@@ -647,6 +698,9 @@ async function fetchEpicorContactsForCustomer(customer) {
  * via fetchRemainingShipToesForCustomer with bounded concurrency. This keeps
  * memory usage predictable while supporting customers with thousands of
  * ship-tos.
+ *
+ * When RUN_CONFIG.companyExternalId is set, fetch only that customer by CustNum
+ * (same value as Shopify Company.externalId).
  */
 async function fetchAllEpicorCustomers() {
   const all = [];
@@ -654,6 +708,35 @@ async function fetchAllEpicorCustomers() {
   let afterCustNum = null;
 
   logger.section("Phase 1 / 2  —  Fetching all Epicor Customers (with ShipToes)");
+
+  const singleFilter = buildSingleCompanyODataFilter(
+    RUN_CONFIG.companyExternalId
+  );
+  if (singleFilter) {
+    logger.info(
+      `COMPANY_EXTERNAL_ID=${hl.key(RUN_CONFIG.companyExternalId)} — single-customer Epicor fetch (${singleFilter})`
+    );
+    const { items } = await fetchEpicorCustomersPage({
+      top: RUN_CONFIG.pageSize,
+      afterCustNum: null,
+      fixedFilter: singleFilter,
+    });
+    if (items.length === 0) {
+      logger.warn(
+        `No Epicor customer matched COMPANY_EXTERNAL_ID=${RUN_CONFIG.companyExternalId}.`
+      );
+    } else if (items.length > 1) {
+      logger.warn(
+        `Expected one row for COMPANY_EXTERNAL_ID but Epicor returned ${items.length} — processing all of them.`
+      );
+    }
+    await topUpShipToesIfTruncated(items);
+    all.push(...items);
+    logger.info(
+      `   ✅ Single-customer fetch: ${hl.num(items.length)} row(s) — running total: ${hl.num(all.length)}`
+    );
+    return all;
+  }
 
   while (true) {
     page++;
@@ -668,34 +751,7 @@ async function fetchAllEpicorCustomers() {
       top: RUN_CONFIG.pageSize,
     });
 
-    // Top up ShipToes for any customer that hit the inline-expand cap. We
-    // detect "potentially truncated" by an exact-equality on the cap; in
-    // theory a customer could have *exactly* the cap and trigger one wasted
-    // round-trip that returns zero, which is acceptable.
-    const truncated = items.filter(
-      (c) =>
-        Array.isArray(c.ShipToes) &&
-        c.ShipToes.length === RUN_CONFIG.shipToExpandTop
-    );
-    if (truncated.length > 0) {
-      logger.info(
-        `   ↪︎ ${hl.num(truncated.length)} customer(s) on this page hit the ShipTo expand cap (${RUN_CONFIG.shipToExpandTop}) — fetching additional pages`
-      );
-      await asyncPool(3, truncated, async (cust) => {
-        const more = await fetchRemainingShipToesForCustomer(
-          cust,
-          RUN_CONFIG.shipToExpandTop
-        );
-        if (more.length > 0) {
-          cust.ShipToes.push(...more);
-          logger.info(
-            `     ↪︎ ${hl.cust(cust.CustID)} (CustNum=${cust.CustNum}): +${hl.num(
-              more.length
-            )} extra ShipToes  —  total ${hl.num(cust.ShipToes.length)}`
-          );
-        }
-      });
-    }
+    await topUpShipToesIfTruncated(items);
 
     all.push(...items);
     logger.info(
@@ -1753,6 +1809,7 @@ function buildCsvWriter() {
       { id: "contacts_skipped_inactive", title: "contacts_skipped_inactive" },
       { id: "contacts_reassigned_from_other_company", title: "contacts_reassigned_from_other_company" },
       { id: "contacts_removed_stale", title: "contacts_removed_stale" },
+      { id: "contacts_removed_inactive", title: "contacts_removed_inactive" },
       { id: "contacts_location_role_assignments", title: "contacts_location_role_assignments" },
       { id: "contacts_failed", title: "contacts_failed" },
       { id: "error_message", title: "error_message" },
@@ -2044,6 +2101,7 @@ async function syncContactsForCustomer({ customer, shopifyCompany }) {
     reused: 0,
     reassigned_from_other_company: 0,
     removed_stale: 0,
+    removed_inactive: 0,
     location_role_assignments: 0,
     failed: 0,
     errors: [],
@@ -2428,41 +2486,64 @@ async function syncContactsForCustomer({ customer, shopifyCompany }) {
   // the split counter hidden for now and roll everything that wasn't newly
   // created into `reused`. The per-row log line is the source of truth.
 
-  // ── 5. Reconciliation: remove stale Shopify contacts that no longer appear
-  //    in Epicor's contact list (Epicor wins). We only consider contacts we
-  //    ourselves could have created — i.e. those whose email we'd recognize.
-  //    Any contact on the Shopify company without an email is left alone
-  //    (operator-created; not ours to touch).
-  const epicorEmails = new Set(byEmail.keys());
-  const stale = existingShopifyContacts.filter((sc) => {
-    const e = normalizeEmail(sc.customer?.defaultEmailAddress?.emailAddress);
-    if (!e) return false; // can't compare — skip
-    return !epicorEmails.has(e);
-  });
-  for (const sc of stale) {
-    const e = normalizeEmail(sc.customer?.defaultEmailAddress?.emailAddress);
+  // ── 5. Reconciliation: Epicor is the source of truth. Remove any Shopify
+  //    CompanyContact whose email either (a) does not appear on Epicor at all,
+  //    or (b) appears on Epicor as Inactive=true. We track the two cases
+  //    separately so the CSV/log shows the reason.
+  //
+  //    Contacts on the Shopify company with no email are left alone — they
+  //    were created outside this sync (by an operator) and aren't ours to
+  //    touch. Ditto contacts whose email is Epicor-active but has no valid
+  //    format; those never entered `byEmail` via the isValidEmail gate above
+  //    and we don't want to nuke them on a parsing technicality.
+  const activeEpicorEmails = new Set(byEmail.keys());
+  const inactiveEpicorEmails = new Set(
+    epicorContacts
+      .filter((c) => c.Inactive === true && isValidEmail(c.EMailAddress))
+      .map((c) => normalizeEmail(c.EMailAddress))
+  );
+  const stale = existingShopifyContacts
+    .map((sc) => {
+      const email = normalizeEmail(
+        sc.customer?.defaultEmailAddress?.emailAddress
+      );
+      if (!email) return null; // operator-created without email — leave alone
+      if (activeEpicorEmails.has(email)) return null; // still active — keep
+      const reason = inactiveEpicorEmails.has(email)
+        ? "inactive_in_epicor"
+        : "missing_from_epicor";
+      return { sc, email, reason };
+    })
+    .filter(Boolean);
+
+  for (const { sc, email, reason } of stale) {
+    const reasonLabel =
+      reason === "inactive_in_epicor"
+        ? "Inactive=true in Epicor"
+        : "not in Epicor";
     try {
       if (RUN_CONFIG.dryRun) {
         logger.warn(
-          `   🟨 [DRY RUN] would REMOVE stale Shopify contact ${hl.key(e)} (CompanyContact=${sc.id}) — not in Epicor`
+          `   🟨 [DRY RUN] would REMOVE Shopify contact ${hl.key(email)} (CompanyContact=${sc.id}) — ${reasonLabel}`
         );
       } else {
         await removeCompanyContact(sc.id);
         logger.warn(
-          `   🧹 REMOVED stale Shopify contact ${hl.key(e)} (CompanyContact=${sc.id}) — not in Epicor`
+          `   🧹 REMOVED Shopify contact ${hl.key(email)} (CompanyContact=${sc.id}) — ${reasonLabel}`
         );
       }
-      summary.removed_stale++;
+      if (reason === "inactive_in_epicor") summary.removed_inactive++;
+      else summary.removed_stale++;
     } catch (err) {
       const msg = err.response?.data
         ? JSON.stringify(err.response.data)
         : err.message;
       logger.error(
-        `   ❌ Failed to remove stale contact ${hl.key(e || sc.id)}`,
+        `   ❌ Failed to remove contact ${hl.key(email || sc.id)} (${reasonLabel})`,
         msg
       );
       summary.failed++;
-      summary.errors.push(`stale ${e || sc.id}: ${msg}`);
+      summary.errors.push(`${reason} ${email || sc.id}: ${msg}`);
     }
   }
 
@@ -2488,6 +2569,7 @@ function applyContactSummaryToRow(row, summary) {
   row.contacts_reassigned_from_other_company =
     summary.reassigned_from_other_company;
   row.contacts_removed_stale = summary.removed_stale;
+  row.contacts_removed_inactive = summary.removed_inactive;
   row.contacts_location_role_assignments = summary.location_role_assignments;
   row.contacts_failed = summary.failed;
   if (summary.failed > 0) {
@@ -2507,6 +2589,7 @@ function applyContactSummaryToRow(row, summary) {
       `no_email=${hl.key(summary.skipped_no_email)}  inactive=${hl.key(summary.skipped_inactive)}  ` +
       `reassigned=${hl.warn(summary.reassigned_from_other_company)}  ` +
       `stale_removed=${hl.warn(summary.removed_stale)}  ` +
+      `inactive_removed=${hl.warn(summary.removed_inactive)}  ` +
       `loc_roles=${hl.ok(summary.location_role_assignments)}  ` +
       `failed=${summary.failed > 0 ? hl.bad(summary.failed) : hl.ok(summary.failed)}`
   );
@@ -2562,6 +2645,7 @@ async function processCustomer(customer, index, totalKnown) {
     contacts_skipped_inactive: 0,
     contacts_reassigned_from_other_company: 0,
     contacts_removed_stale: 0,
+    contacts_removed_inactive: 0,
     contacts_location_role_assignments: 0,
     contacts_failed: 0,
     error_message: "",
@@ -2839,7 +2923,17 @@ async function main() {
     dryRun: RUN_CONFIG.dryRun,
     firstPageOnly: RUN_CONFIG.firstPageOnly,
     maxItems: RUN_CONFIG.maxItems || "no cap",
+    companyExternalId: RUN_CONFIG.companyExternalId || "(all)",
   });
+
+  if (RUN_CONFIG.companyExternalId && !/^\d+$/.test(RUN_CONFIG.companyExternalId)) {
+    logger.error(
+      "COMPANY_EXTERNAL_ID must be Epicor CustNum (digits only). Shopify Company.externalId uses CustNum, not CustID.",
+      { received: RUN_CONFIG.companyExternalId }
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const { writer: csvWriter, csvPath } = buildCsvWriter();
   logger.info(`📝 CSV report → ${hl.key(csvPath)}`);
@@ -2865,6 +2959,7 @@ async function main() {
     contacts_skipped_inactive: 0,
     contacts_reassigned: 0,
     contacts_removed_stale: 0,
+    contacts_removed_inactive: 0,
     contacts_location_roles: 0,
     contacts_failed: 0,
   };
@@ -2914,8 +3009,11 @@ async function main() {
 
   const totalCount = allCustomers.length;
   logger.blank();
+  const fetchScopeNote = RUN_CONFIG.companyExternalId
+    ? `(single company: COMPANY_EXTERNAL_ID=${RUN_CONFIG.companyExternalId})`
+    : "(every one will be evaluated)";
   logger.info(
-    `📊 ${hl.key("Total Epicor Customers fetched")}: ${hl.num(totalCount)}  (every one will be evaluated)`
+    `📊 ${hl.key("Total Epicor Customers fetched")}: ${hl.num(totalCount)}  ${fetchScopeNote}`
   );
   logger.blank();
 
@@ -2948,6 +3046,7 @@ async function main() {
     totals.contacts_skipped_inactive += Number(row.contacts_skipped_inactive || 0);
     totals.contacts_reassigned += Number(row.contacts_reassigned_from_other_company || 0);
     totals.contacts_removed_stale += Number(row.contacts_removed_stale || 0);
+    totals.contacts_removed_inactive += Number(row.contacts_removed_inactive || 0);
     totals.contacts_location_roles += Number(row.contacts_location_role_assignments || 0);
     totals.contacts_failed += Number(row.contacts_failed || 0);
 
@@ -2981,6 +3080,7 @@ async function main() {
           `inactive=${hl.key(totals.contacts_skipped_inactive)}  ` +
           `reassigned=${hl.warn(totals.contacts_reassigned)}  ` +
           `stale_removed=${hl.warn(totals.contacts_removed_stale)}  ` +
+          `inactive_removed=${hl.warn(totals.contacts_removed_inactive)}  ` +
           `loc_roles=${hl.ok(totals.contacts_location_roles)}  ` +
           `failed=${totals.contacts_failed > 0 ? hl.bad(totals.contacts_failed) : hl.ok(totals.contacts_failed)}`
       );
